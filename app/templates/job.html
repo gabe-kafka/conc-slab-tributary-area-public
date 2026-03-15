@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}Job {{ job.id }}{% endblock %}
+
+{% block content %}
+  <section class="kpi-strip">
+    <div class="kpi">
+      <span>JOB</span>
+      <strong>{{ job.id[:8] }}</strong>
+      <small>{{ job.status|upper }}</small>
+    </div>
+    <div class="kpi">
+      <span>FILE</span>
+      <strong>{{ job.input_filename }}</strong>
+      <small>{{ job.source_units|upper }}</small>
+    </div>
+    <div class="kpi">
+      <span>BOUNDARY</span>
+      <strong>{{ job.layer_mapping.boundary|length }}</strong>
+      <small>LAYERS</small>
+    </div>
+    <div class="kpi">
+      <span>COLUMNS</span>
+      <strong>{{ job.layer_mapping.support_point|length }}</strong>
+      <small>LAYERS</small>
+    </div>
+  </section>
+
+  {% if job.error_message %}
+    <div class="inline-alert error">{{ job.error_message }}</div>
+  {% endif %}
+
+  <section class="grid-shell job-layout">
+    <section class="panel">
+      <div class="panel-label">JOB SUMMARY</div>
+      <table class="data-table compact">
+        <tbody>
+          {% set dxf_ready = "tributary_output.dxf" in job.artifacts %}
+          {% set xlsx_ready = "column_load_takedown.xlsx" in job.artifacts %}
+          {% if job.status == "completed" %}
+            {% set output_state = "READY" %}
+          {% elif job.status == "needs_review" %}
+            {% set output_state = "BLOCKED" %}
+          {% elif job.status == "failed" %}
+            {% set output_state = "FAILED" %}
+          {% else %}
+            {% set output_state = "PENDING" %}
+          {% endif %}
+          <tr>
+            <th>STATUS</th>
+            <td>{{ job.status.replace("_", " ")|upper }}</td>
+          </tr>
+          <tr>
+            <th>CREATED</th>
+            <td>{{ job.created_at }}</td>
+          </tr>
+          <tr>
+            <th>UPDATED</th>
+            <td>{{ job.updated_at }}</td>
+          </tr>
+          <tr>
+            <th>UNITS</th>
+            <td>{{ job.source_units|upper }}</td>
+          </tr>
+          <tr>
+            <th>OUTPUTS</th>
+            <td>{{ job.artifacts|length }} READY / 2 EXPECTED</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="panel-subsection">
+        <div class="panel-label">PROCESS</div>
+        <div class="progress-shell">
+          <div class="progress-meta">
+            <strong id="job-progress-stage">PENDING</strong>
+            <span id="job-progress-value">0%</span>
+          </div>
+          <div class="progress-track" aria-label="Job progress">
+            <div class="progress-fill" id="job-progress-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-subsection">
+        <div class="panel-label">OUTPUT FILES</div>
+        <table class="data-table compact">
+          <thead>
+            <tr>
+              <th>FILE</th>
+              <th>STATE</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>tributary_output.dxf</code></td>
+              <td>
+                {% if dxf_ready %}
+                  <span class="status-ready">READY</span>
+                {% else %}
+                  <span class="status-pending">{{ output_state }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if dxf_ready %}
+                  <a class="button button-primary" href="/jobs/{{ job.id }}/artifacts/tributary_output.dxf">DOWNLOAD DXF</a>
+                {% else %}
+                  <span class="mono-dim">WAITING FOR FILE</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <td><code>column_load_takedown.xlsx</code></td>
+              <td>
+                {% if xlsx_ready %}
+                  <span class="status-ready">READY</span>
+                {% else %}
+                  <span class="status-pending">{{ output_state }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if xlsx_ready %}
+                  <a class="button button-primary" href="/jobs/{{ job.id }}/artifacts/column_load_takedown.xlsx">DOWNLOAD XLSX</a>
+                {% else %}
+                  <span class="mono-dim">WAITING FOR FILE</span>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel-subsection">
+        <div class="panel-label">LAYER MAPPING</div>
+        <table class="data-table compact">
+          <thead>
+            <tr>
+              <th>ROLE</th>
+              <th>LAYERS</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for role, layers in job.layer_mapping.items() %}
+              <tr>
+                <td>
+                  {% if role == "boundary" %}BOUNDARY LAYERS{% endif %}
+                  {% if role == "wall" %}WALL SUPPORT LAYERS{% endif %}
+                  {% if role == "support_point" %}COLUMN LAYERS{% endif %}
+                  {% if role == "column_label" %}COLUMN LABEL LAYERS{% endif %}
+                  {% if role == "floor_label" %}FLOOR LABEL LAYERS{% endif %}
+                </td>
+                <td class="mono-dim">
+                  {% if layers %}
+                    {% for layer in layers %}
+                      {{ display_layer_name(layer) }}{% if not loop.last %} · {% endif %}
+                    {% endfor %}
+                  {% else %}
+                    --
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if job.warnings %}
+        <div class="panel-subsection">
+          <div class="panel-label">WARNINGS</div>
+          <table class="data-table compact">
+            <tbody>
+              {% for warning in job.warnings %}
+                <tr>
+                  <td class="warning-text">{{ warning }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <div class="panel-label">WORKER LOG</div>
+      <pre id="job-log">{{ job.logs|join('\n') }}</pre>
+    </section>
+  </section>
+
+  <script>
+    const initialJob = {{ job.to_dict()|tojson }};
+    const progressFill = document.getElementById("job-progress-fill");
+    const progressValue = document.getElementById("job-progress-value");
+    const progressStage = document.getElementById("job-progress-stage");
+    const jobLog = document.getElementById("job-log");
+
+    function deriveProgress(payload) {
+      const logs = (payload.logs || []).join("\n");
+      const artifacts = payload.artifacts || {};
+
+      if (payload.status === "completed") {
+        return { percent: 100, stage: "COMPLETE" };
+      }
+      if (payload.status === "needs_review") {
+        return { percent: 100, stage: "REVIEW REQUIRED" };
+      }
+      if (payload.status === "failed") {
+        return { percent: 100, stage: "FAILED" };
+      }
+      if (payload.status === "queued") {
+        return { percent: 8, stage: "QUEUED" };
+      }
+
+      let percent = 16;
+      let stage = "READING DXF";
+
+      if (/Detected layers:|Boundary loops:|Column Labels:/.test(logs)) {
+        percent = 28;
+        stage = "EXTRACTING INPUT";
+      }
+      if (/\[stage\] starting tributary\.py|Found \d+ WALL entities|Extracted \d+ WALL entities/.test(logs)) {
+        percent = 34;
+        stage = "PREPARING SOLVE";
+      }
+      if (/Identified \d+ floor plan|Floor Number Association|Consolidated .* floor groups/.test(logs)) {
+        percent = 42;
+        stage = "BUILDING FLOORS";
+      }
+      if (/Wall Assignment Summary|Column Assignment Summary|Column Label Association/.test(logs)) {
+        percent = 58;
+        stage = "ASSIGNING SUPPORTS";
+      }
+      if (/Facade Length Attribution|Tributary Region Calculation|Tributary regions calculated/.test(logs)) {
+        percent = 76;
+        stage = "CALCULATING TRIBUTARY";
+      }
+      if (/Copying Original DXF Content|Calculating Drawing Extents|DXF output file created/.test(logs) || artifacts["tributary_output.dxf"]) {
+        percent = 90;
+        stage = "WRITING DXF";
+      }
+      if (/Excel export successful/.test(logs) || artifacts["column_load_takedown.xlsx"]) {
+        percent = 96;
+        stage = "WRITING XLSX";
+      }
+
+      return { percent, stage };
+    }
+
+    function renderProgress(payload) {
+      const { percent, stage } = deriveProgress(payload);
+      progressFill.style.width = `${percent}%`;
+      progressValue.textContent = `${percent}%`;
+      progressStage.textContent = stage;
+    }
+
+    renderProgress(initialJob);
+
+    {% if job.status in ["queued", "running"] %}
+      const jobId = {{ job.id|tojson }};
+      async function poll() {
+        const response = await fetch(`/api/jobs/${jobId}`);
+        const payload = await response.json();
+        jobLog.textContent = (payload.logs || []).join("\n");
+        renderProgress(payload);
+        if (payload.status !== "queued" && payload.status !== "running") {
+          window.location.reload();
+          return;
+        }
+        setTimeout(poll, 1500);
+      }
+      setTimeout(poll, 1500);
+    {% endif %}
+  </script>
+{% endblock %}

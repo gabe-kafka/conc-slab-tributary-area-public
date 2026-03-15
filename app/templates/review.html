@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+
+{% block title %}Review DXF{% endblock %}
+
+{% block content %}
+  <section class="kpi-strip">
+    <div class="kpi">
+      <span>FILE</span>
+      <strong>{{ draft.filename }}</strong>
+      <small>DRAFT {{ draft.id[:8] }}</small>
+    </div>
+    <div class="kpi">
+      <span>FLOOR AREA</span>
+      <strong>{{ "%.0f"|format(draft.inferred_floor_area_sf) }}</strong>
+      <small>SF INFERRED</small>
+    </div>
+    <div class="kpi">
+      <span>LAYERS</span>
+      <strong>{{ draft.layers|length }}</strong>
+      <small>VISIBLE</small>
+    </div>
+    <div class="kpi">
+      <span>UNIT CHECK</span>
+      <strong>{% if draft.require_unit_confirmation %}REVIEW{% else %}CLEAR{% endif %}</strong>
+      <small>DEFAULT IN</small>
+    </div>
+  </section>
+
+  {% if error %}
+    <div class="inline-alert error">{{ error }}</div>
+  {% endif %}
+
+  <section class="panel">
+    <div class="panel-label">ROLE GUIDE</div>
+    <table class="data-table compact">
+      <thead>
+        <tr>
+          <th>FIELD</th>
+          <th>SELECT THIS</th>
+          <th>IGNORE THIS</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>BOUNDARY</td>
+          <td>Slab perimeter, slab edges, openings, outline geometry.</td>
+          <td>Column points, text labels, dimensions, notes.</td>
+        </tr>
+        <tr>
+          <td>WALL SUPPORT</td>
+          <td>Bearing, shear, or core wall linework that should attract tributary area.</td>
+          <td>Architectural partitions that should not act as support.</td>
+        </tr>
+        <tr>
+          <td>COLUMNS</td>
+          <td>Actual column point geometry, usually `POINT` entities or column center markers.</td>
+          <td>Text labels, dimensions, floor tags, wall linework.</td>
+        </tr>
+        <tr>
+          <td>COLUMN LABEL</td>
+          <td>Text layer containing column tags like `C1`, `5A`, `B-3`.</td>
+          <td>Grid bubbles, room names, floor names.</td>
+        </tr>
+        <tr>
+          <td>FLOOR LABEL</td>
+          <td>Text layer containing level names like `LEVEL 2`, `ROOF`, `P1`.</td>
+          <td>Column tags, notes, dimensions.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="grid-shell review-layout">
+    <section class="panel">
+      <div class="panel-label">LAYER MAPPING</div>
+      <div class="mapping-header">
+        <div class="mapping-state">
+          <span class="panel-label">ACTIVE FIELD</span>
+          <strong id="active-mapping-role">BOUNDARY</strong>
+        </div>
+        <div class="mapping-state">
+          <span class="panel-label">SELECTION RULE</span>
+          <strong>YOU CAN CHOOSE ONE OR MORE LAYERS</strong>
+        </div>
+        <div class="mapping-state">
+          <span class="panel-label">HOW TO EDIT</span>
+          <strong>CMD/CTRL+CLICK ADDS OR REMOVES A LAYER</strong>
+        </div>
+      </div>
+      <form action="/jobs" method="post" class="mapping-grid">
+        <input type="hidden" name="draft_id" value="{{ draft.id }}" />
+
+        <label class="field mapping-field">
+          <span class="field-label">BOUNDARY LAYERS</span>
+          <select name="boundary_layers" multiple size="8">
+            {% for layer in draft.layers %}
+              <option value="{{ layer }}" {% if layer in draft.suggestions.boundary %}selected{% endif %}>{{ display_layer_name(layer) }}</option>
+            {% endfor %}
+          </select>
+          <span class="field-hint">Pick slab perimeter and opening geometry.</span>
+        </label>
+
+        <label class="field mapping-field">
+          <span class="field-label">WALL SUPPORT LAYERS</span>
+          <select name="wall_layers" multiple size="8">
+            {% for layer in draft.layers %}
+              <option value="{{ layer }}" {% if layer in draft.suggestions.wall %}selected{% endif %}>{{ display_layer_name(layer) }}</option>
+            {% endfor %}
+          </select>
+          <span class="field-hint">Pick supporting wall linework only.</span>
+        </label>
+
+        <label class="field mapping-field">
+          <span class="field-label">COLUMN LAYERS</span>
+          <select name="support_point_layers" multiple size="8">
+            {% for layer in draft.layers %}
+              <option value="{{ layer }}" {% if layer in draft.suggestions.support_point %}selected{% endif %}>{{ display_layer_name(layer) }}</option>
+            {% endfor %}
+          </select>
+          <span class="field-hint">select column/point</span>
+        </label>
+
+        <label class="field mapping-field">
+          <span class="field-label">COLUMN LABEL LAYERS</span>
+          <select name="column_label_layers" multiple size="8">
+            {% for layer in draft.layers %}
+              <option value="{{ layer }}" {% if layer in draft.suggestions.column_label %}selected{% endif %}>{{ display_layer_name(layer) }}</option>
+            {% endfor %}
+          </select>
+          <span class="field-hint">Pick text that names the columns.</span>
+        </label>
+
+        <label class="field mapping-field">
+          <span class="field-label">FLOOR LABEL LAYERS</span>
+          <select name="floor_label_layers" multiple size="8">
+            {% for layer in draft.layers %}
+              <option value="{{ layer }}" {% if layer in draft.suggestions.floor_label %}selected{% endif %}>{{ display_layer_name(layer) }}</option>
+            {% endfor %}
+          </select>
+          <span class="field-hint">Pick text that names the floor or level.</span>
+        </label>
+
+        <fieldset class="field">
+          <legend class="field-label">BASE UNITS</legend>
+          <div class="radio-stack">
+            <label><input type="radio" name="source_units" value="in" checked /> INCHES</label>
+            <label><input type="radio" name="source_units" value="ft" /> FEET</label>
+          </div>
+        </fieldset>
+
+        <div class="action-row full-width">
+          <button type="submit" class="button button-primary">QUEUE JOB</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-label">LAYER INVENTORY</div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>LAYER</th>
+              <th>ENTITIES</th>
+              <th>SUGGESTED ROLE</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for layer, counts in draft.layer_counts.items() %}
+              <tr>
+                <td>{{ display_layer_name(layer) }}</td>
+                <td class="mono-dim">
+                  {% for kind, count in counts.items() %}
+                    {{ kind }}={{ count }}{% if not loop.last %} · {% endif %}
+                  {% endfor %}
+                </td>
+                <td class="mono-dim">
+                  {% set ns = namespace(found=[]) %}
+                  {% for role, suggested_layers in draft.suggestions.items() %}
+                    {% if layer in suggested_layers %}
+                      {% if role == "boundary" %}
+                        {% set ns.found = ns.found + ["BOUNDARY"] %}
+                      {% elif role == "wall" %}
+                        {% set ns.found = ns.found + ["WALL SUPPORT"] %}
+                      {% elif role == "support_point" %}
+                        {% set ns.found = ns.found + ["COLUMNS"] %}
+                      {% elif role == "column_label" %}
+                        {% set ns.found = ns.found + ["COLUMN LABEL"] %}
+                      {% elif role == "floor_label" %}
+                        {% set ns.found = ns.found + ["FLOOR LABEL"] %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {% if ns.found %}
+                    {{ ns.found|join(' · ') }}
+                  {% else %}
+                    --
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+
+  {% if draft.require_unit_confirmation %}
+    <dialog class="review-dialog" open>
+      <div class="dialog-panel">
+        <div class="panel-label">UNIT REVIEW</div>
+        <table class="data-table compact">
+          <tbody>
+            <tr>
+              <th>TRIGGER</th>
+              <td>INTERPRETED FLOOR AREA EXCEEDS 10,000 SF.</td>
+            </tr>
+            <tr>
+              <th>DEFAULT</th>
+              <td>KEEP INCHES UNLESS THE CAD FILE WAS DRAWN IN FEET.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="action-row">
+          <button type="button" class="button" onclick="this.closest('dialog').close()">ACKNOWLEDGE</button>
+        </div>
+      </div>
+    </dialog>
+  {% endif %}
+
+  <script>
+    const mappingFields = Array.from(document.querySelectorAll(".mapping-field"));
+    const activeMappingRole = document.getElementById("active-mapping-role");
+
+    function setActiveField(field) {
+      mappingFields.forEach((node) => node.classList.toggle("is-active", node === field));
+      const label = field?.querySelector(".field-label");
+      if (label && activeMappingRole) activeMappingRole.textContent = label.textContent;
+    }
+
+    mappingFields.forEach((field, index) => {
+      const select = field.querySelector("select");
+      if (!select) return;
+      select.addEventListener("focus", () => setActiveField(field));
+      select.addEventListener("click", () => setActiveField(field));
+      if (index === 0) setActiveField(field);
+    });
+  </script>
+{% endblock %}

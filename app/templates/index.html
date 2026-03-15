@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}Upload DXF{% endblock %}
+
+{% block content %}
+  <section class="grid-shell upload-layout">
+    <section class="panel">
+      <div class="panel-label">SYSTEM</div>
+      <table class="data-table compact">
+        <tbody>
+          <tr>
+            <th>SCOPE</th>
+            <td>DXF upload, layer review, async solve, DXF + XLSX export.</td>
+          </tr>
+          <tr>
+            <th>INPUT</th>
+            <td>Single DXF. User confirms semantic layer mapping before queueing.</td>
+          </tr>
+          <tr>
+            <th>UNITS</th>
+            <td>Default inches. Unit question appears if interpreted floor area exceeds 10,000 sf.</td>
+          </tr>
+          <tr>
+            <th>REVIEW</th>
+            <td>Shared support ownership or unclear geometry stops for review instead of auto-guessing.</td>
+          </tr>
+          <tr>
+            <th>OUTPUT</th>
+            <td><code>tributary_output.dxf</code> and <code>column_load_takedown.xlsx</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <div class="panel-label">UPLOAD</div>
+      <form class="dense-form" action="/inspect" method="post" enctype="multipart/form-data">
+        <label class="field">
+          <span class="field-label">DXF FILE</span>
+          <input type="file" name="upload" accept=".dxf" required />
+        </label>
+
+        <div class="action-row">
+          <button type="submit" class="button button-primary">INSPECT DXF</button>
+        </div>
+
+        {% if error %}
+          <div class="inline-alert error">{{ error }}</div>
+        {% endif %}
+      </form>
+    </section>
+  </section>
+{% endblock %}

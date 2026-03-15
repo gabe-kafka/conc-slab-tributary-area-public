@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Two-Way Slab Tributary Area{% endblock %}</title>
+    <link rel="stylesheet" href="/static/site.css?v=20260315b" />
+  </head>
+  <body class="page-{{ page or 'default' }}">
+    <div class="app-shell">
+      <header class="status-bar">
+        <div class="status-left">
+          <span class="status-chip">LOCAL V1</span>
+          <span class="status-chip">TRIBUTARY AREA</span>
+          <span class="status-chip">ROUTE {{ (page or 'default')|upper }}</span>
+        </div>
+        <div class="status-right">
+          <span class="status-chip">CONN OK</span>
+          <span class="status-chip" id="status-clock">--:--:--</span>
+        </div>
+      </header>
+
+      <nav class="top-nav">
+        <a href="/" class="{% if page == 'index' %}active{% endif %}">UPLOAD</a>
+      </nav>
+
+      <main class="workspace">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <script>
+      const statusClock = document.getElementById("status-clock");
+      function refreshClock() {
+        if (!statusClock) return;
+        const stamp = new Date();
+        statusClock.textContent = stamp.toLocaleString("en-US", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        });
+      }
+      refreshClock();
+      setInterval(refreshClock, 1000);
+    </script>
+  </body>
+</html>
