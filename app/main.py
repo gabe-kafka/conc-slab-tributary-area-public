@@ -9,14 +9,15 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.runtime_paths import bundle_root, user_data_root
 from app.services.inspection import display_layer_name, save_upload
 from app.services.jobs import JobManager
 
-APP_DIR = Path(__file__).resolve().parent
-ROOT_DIR = APP_DIR.parent
+ROOT_DIR = bundle_root()
+APP_DIR = ROOT_DIR / "app"
 TEMPLATES_DIR = APP_DIR / "templates"
 STATIC_DIR = APP_DIR / "static"
-VAR_DIR = ROOT_DIR / "var"
+VAR_DIR = user_data_root() / "var"
 ENGINE_DIR = APP_DIR / "engine" / "legacy"
 DEMO_DIR = ROOT_DIR / "demo"
 DEMO_INPUT_PATH = DEMO_DIR / "INPUT.dxf"
