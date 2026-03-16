@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 import runpy
 import socket
@@ -14,6 +15,8 @@ import webbrowser
 from pathlib import Path
 
 from app.runtime_paths import bundle_root, user_data_root
+
+DESKTOP_LOG_FILENAME = "desktop-runtime.log"
 
 
 def worker_subprocess_command(script_name: str, workspace: Path) -> list[str]:
@@ -38,6 +41,13 @@ def worker_subprocess_command(script_name: str, workspace: Path) -> list[str]:
     ]
 
 
+def configure_standard_streams() -> None:
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def run_worker_script(script_name: str, workspace: Path) -> int:
     script_path = bundle_root() / "app" / "engine" / "legacy" / script_name
     if not script_path.exists():
@@ -46,6 +56,7 @@ def run_worker_script(script_name: str, workspace: Path) -> int:
     prior_cwd = Path.cwd()
     added_paths: list[str] = []
     try:
+        configure_standard_streams()
         os.chdir(workspace)
         for candidate in (str(script_path.parent), str(bundle_root())):
             if candidate not in sys.path:
@@ -76,9 +87,45 @@ def configured_port() -> int:
         raise SystemExit(f"Invalid TRIBUTARY_APP_PORT: {raw_value}") from exc
 
 
-def wait_for_server(url: str, timeout: float = 30.0) -> bool:
+def desktop_log_path() -> Path:
+    return user_data_root() / DESKTOP_LOG_FILENAME
+
+
+def append_desktop_log(message: str) -> None:
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with desktop_log_path().open("a", encoding="utf-8") as handle:
+            handle.write(f"[{timestamp}] {message.rstrip()}\n")
+    except OSError:
+        pass
+
+
+def show_startup_error(message: str) -> None:
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Two-Way Slab Tributary Area", message, parent=root)
+        root.destroy()
+    except Exception:
+        if sys.stderr is not None:
+            print(message, file=sys.stderr)
+
+
+def wait_for_server(
+    url: str,
+    timeout: float = 30.0,
+    server_thread: threading.Thread | None = None,
+    failure_event: threading.Event | None = None,
+) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if failure_event is not None and failure_event.is_set():
+            return False
+        if server_thread is not None and not server_thread.is_alive():
+            return False
         try:
             with urllib.request.urlopen(url, timeout=1.0):
                 return True
@@ -98,13 +145,46 @@ def launch_desktop_app() -> int:
     port = configured_port()
     auto_open_browser = os.getenv("TRIBUTARY_APP_NO_BROWSER", "").strip().lower() not in {"1", "true", "yes"}
     url = f"http://127.0.0.1:{port}"
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        access_log=False,
+        log_config=None,
+    )
     server = uvicorn.Server(config)
-    server_thread = threading.Thread(target=server.run, name="desktop-server", daemon=True)
+    startup_failure = threading.Event()
+    server_error: list[str] = []
+
+    def run_server() -> None:
+        try:
+            server.run()
+        except Exception:
+            details = traceback.format_exc()
+            server_error.append(details)
+            append_desktop_log("Desktop server startup failed.\n" + details)
+            startup_failure.set()
+
+    server_thread = threading.Thread(target=run_server, name="desktop-server", daemon=True)
     server_thread.start()
 
-    if not wait_for_server(url):
-        print("Desktop app failed to start local server.", file=sys.stderr)
+    if not wait_for_server(url, server_thread=server_thread, failure_event=startup_failure):
+        server.should_exit = True
+        server_thread.join(timeout=1.0)
+        log_path = desktop_log_path()
+        if not server_error:
+            append_desktop_log(f"Desktop server did not respond within timeout for {url}.")
+        message = (
+            "Desktop app failed to start the local server.\n\n"
+            f"App URL: {url}\n"
+            f"Support log: {log_path}"
+        )
+        show_startup_error(message)
+        if sys.stderr is not None:
+            print("Desktop app failed to start local server.", file=sys.stderr)
+            if server_error:
+                print(server_error[0], file=sys.stderr)
         return 1
 
     root = tk.Tk()
@@ -158,6 +238,7 @@ def launch_desktop_app() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    multiprocessing.freeze_support()
     parser = argparse.ArgumentParser()
     parser.add_argument("--worker-script")
     parser.add_argument("--workspace")

@@ -77,13 +77,42 @@ Unsigned local packaging is supported now. For an employee-ready signed release,
 - `packaging/macos/NOTARIZATION.md`
 
 ### Build Windows Installer
-1. Build the desktop bundle on Windows.
-2. Install Inno Setup.
-3. Run:
+1. Create the Windows build venv:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\pip install -r requirements.txt -r requirements-build.txt
+```
+
+2. Build the Windows desktop bundle:
+
+```powershell
+.\.venv\Scripts\python scripts\build_desktop.py
+```
+
+3. Install Inno Setup 6 on Windows.
+4. Build the installer:
 
 ```powershell
 iscc packaging/windows/TributaryAreaTool.iss
 ```
 
+If `iscc` is not on `PATH`, use the installed compiler directly:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging\windows\TributaryAreaTool.iss
+```
+
 Installer output:
 - `dist/installer/TributaryAreaToolInstaller.exe`
+
+Windows installer behavior:
+- Install location: `%LOCALAPPDATA%\Programs\Two-Way Slab Tributary Area`
+- Runtime data: `%LOCALAPPDATA%\TributaryAreaTool`
+- Start menu shortcut: `Two-Way Slab Tributary Area`
+- Desktop shortcut: optional installer task
+
+### Windows Signing
+Unsigned local packaging is supported now. For an employee-ready Windows release, code-sign:
+- `dist/installer/TributaryAreaToolInstaller.exe`
+- `%LOCALAPPDATA%\Programs\Two-Way Slab Tributary Area\Tributary Area Tool.exe` before packaging, if your signing flow supports it

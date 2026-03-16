@@ -1,6 +1,6 @@
 #define MyAppName "Two-Way Slab Tributary Area"
 #define MyAppVersion "1.0.0"
-#define MyAppPublisher "Your Company"
+#define MyAppPublisher "Gabe Kafka"
 #define MyAppExeName "Tributary Area Tool.exe"
 #define MyAppDistDir "..\\..\\dist\\Tributary Area Tool"
 
@@ -9,7 +9,7 @@ AppId={{A89E8C9F-DC68-4F2A-B137-6A1EB9A65B27}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=..\..\dist\installer
 OutputBaseFilename=TributaryAreaToolInstaller
@@ -18,6 +18,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
+UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Files]
 Source: "{#MyAppDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

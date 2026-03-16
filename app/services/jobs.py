@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -110,12 +111,18 @@ class JobManager:
     def _run_script(self, job_id: str, script_path: Path, workspace: Path) -> int:
         self._append_logs(job_id, f"[stage] starting {script_path.name}")
         command = worker_subprocess_command(script_path.name, workspace)
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         process = subprocess.Popen(
             command,
             cwd=workspace,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
 
