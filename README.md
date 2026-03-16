@@ -32,6 +32,19 @@ Runtime data locations:
 - macOS: `~/Library/Application Support/TributaryAreaTool`
 - Linux: `${XDG_DATA_HOME:-~/.local/share}/TributaryAreaTool`
 
+### Latest Release
+For non-technical users, the single delivery page should be the GitHub Releases page:
+- Latest release: `https://github.com/gabe-kafka/conc-slab-tributary-area-public/releases/latest`
+
+That page should contain:
+- `TributaryAreaToolInstaller.exe`
+- short install steps
+- first-run notes
+- SmartScreen / unsigned-app note until signing is added
+
+Maintainers can start from:
+- `packaging/windows/GITHUB_RELEASE_BODY.md`
+
 ### Run Desktop App From Source
 ```bash
 uv venv --clear --seed --python 3.12 .venv
