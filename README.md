@@ -49,7 +49,32 @@ uv pip install --python .venv/bin/python -r requirements.txt -r requirements-bui
 Build output:
 - macOS: `dist/Tributary Area Tool.app`
 - Windows / Linux: `dist/Tributary Area Tool/`
-- Windows: `dist/Tributary Area Tool/`
+
+### Build macOS DMG
+```bash
+.venv/bin/python scripts/build_desktop.py
+./scripts/build_macos_dmg.sh
+```
+
+macOS release artifacts:
+- `dist/Tributary Area Tool.app`
+- `dist/TributaryAreaTool-macOS.dmg`
+
+### Test macOS Bundle
+This launches the packaged app on a fixed local port without auto-opening a browser:
+
+```bash
+TRIBUTARY_APP_PORT=8010 \
+TRIBUTARY_APP_NO_BROWSER=1 \
+"dist/Tributary Area Tool.app/Contents/MacOS/Tributary Area Tool"
+```
+
+Then open:
+- `http://127.0.0.1:8010`
+
+### macOS Signing / Notarization
+Unsigned local packaging is supported now. For an employee-ready signed release, follow:
+- `packaging/macos/NOTARIZATION.md`
 
 ### Build Windows Installer
 1. Build the desktop bundle on Windows.

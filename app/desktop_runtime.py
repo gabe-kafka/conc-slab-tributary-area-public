@@ -66,6 +66,16 @@ def find_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def configured_port() -> int:
+    raw_value = os.getenv("TRIBUTARY_APP_PORT", "").strip()
+    if not raw_value:
+        return find_free_port()
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid TRIBUTARY_APP_PORT: {raw_value}") from exc
+
+
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -85,7 +95,8 @@ def launch_desktop_app() -> int:
 
     from app.main import app
 
-    port = find_free_port()
+    port = configured_port()
+    auto_open_browser = os.getenv("TRIBUTARY_APP_NO_BROWSER", "").strip().lower() not in {"1", "true", "yes"}
     url = f"http://127.0.0.1:{port}"
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -137,7 +148,8 @@ def launch_desktop_app() -> int:
     ttk.Button(button_row, text="Quit", command=close_app).pack(side="left", padx=(10, 0))
 
     root.protocol("WM_DELETE_WINDOW", close_app)
-    root.after(250, open_app)
+    if auto_open_browser:
+        root.after(250, open_app)
     root.mainloop()
 
     server.should_exit = True
