@@ -83,8 +83,9 @@ pre {
 
 .top-nav {
   margin-top: 1px;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .top-nav a {
@@ -97,6 +98,52 @@ pre {
 .top-nav a.active,
 .top-nav a:hover {
   color: var(--text);
+}
+
+.top-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 26px;
+}
+
+.nav-upload {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 560px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nav-upload-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.nav-upload-name {
+  min-width: 180px;
+  max-width: 320px;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace {
@@ -483,5 +530,19 @@ pre {
     align-items: flex-start;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .top-nav {
+    align-items: flex-start;
+  }
+
+  .nav-upload {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  .nav-upload-name {
+    min-width: min(100%, 220px);
+    max-width: 100%;
   }
 }

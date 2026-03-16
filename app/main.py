@@ -18,6 +18,8 @@ TEMPLATES_DIR = APP_DIR / "templates"
 STATIC_DIR = APP_DIR / "static"
 VAR_DIR = ROOT_DIR / "var"
 ENGINE_DIR = APP_DIR / "engine" / "legacy"
+DEMO_DIR = ROOT_DIR / "demo"
+DEMO_INPUT_PATH = DEMO_DIR / "INPUT.dxf"
 
 app = FastAPI(title="Two-Way Slab Tributary Area")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -37,6 +39,28 @@ def _session_id(request: Request) -> str:
 
 def _apply_session_cookie(request: Request, response) -> None:
     response.set_cookie("session_id", _session_id(request), httponly=True, samesite="lax")
+
+
+def _inspect_payload(request: Request, session_id: str, filename: str, payload: bytes, status_code: int = 200):
+    try:
+        draft = save_upload(payload, filename, session_id, manager.drafts_dir)
+    except ezdxf.DXFStructureError:
+        response = templates.TemplateResponse(
+            "index.html",
+            {"request": request, "page": "index", "error": "DXF could not be parsed."},
+            status_code=400,
+        )
+        _apply_session_cookie(request, response)
+        return response
+
+    manager.register_draft(draft)
+    response = templates.TemplateResponse(
+        "review.html",
+        {"request": request, "page": "review", "draft": draft},
+        status_code=status_code,
+    )
+    _apply_session_cookie(request, response)
+    return response
 
 
 @app.get("/")
@@ -65,24 +89,26 @@ async def inspect(request: Request, upload: UploadFile = File(...)):
         return response
 
     payload = await upload.read()
-    try:
-        draft = save_upload(payload, upload.filename, session_id, manager.drafts_dir)
-    except ezdxf.DXFStructureError:
+    return _inspect_payload(request, session_id, upload.filename, payload)
+
+
+@app.post("/inspect/demo")
+async def inspect_demo(request: Request):
+    if not DEMO_INPUT_PATH.exists():
         response = templates.TemplateResponse(
             "index.html",
-            {"request": request, "page": "index", "error": "DXF could not be parsed."},
-            status_code=400,
+            {"request": request, "page": "index", "error": "Demo DXF is not available."},
+            status_code=500,
         )
         _apply_session_cookie(request, response)
         return response
 
-    manager.register_draft(draft)
-    response = templates.TemplateResponse(
-        "review.html",
-        {"request": request, "page": "review", "draft": draft},
+    return _inspect_payload(
+        request=request,
+        session_id=_session_id(request),
+        filename="DEMO_INPUT.dxf",
+        payload=DEMO_INPUT_PATH.read_bytes(),
     )
-    _apply_session_cookie(request, response)
-    return response
 
 
 @app.post("/jobs")

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Two-Way Slab Tributary Area{% endblock %}</title>
-    <link rel="stylesheet" href="/static/site.css?v=20260315b" />
+    <link rel="stylesheet" href="/static/site.css?v=20260315c" />
   </head>
   <body class="page-{{ page or 'default' }}">
     <div class="app-shell">
@@ -21,7 +21,22 @@
       </header>
 
       <nav class="top-nav">
-        <a href="/" class="{% if page == 'index' %}active{% endif %}">UPLOAD</a>
+        <div class="top-nav-links">
+          <a href="/" class="{% if page == 'index' %}active{% endif %}">UPLOAD</a>
+        </div>
+        <form class="nav-upload" action="/inspect" method="post" enctype="multipart/form-data">
+          <input
+            id="nav-upload-input"
+            class="nav-upload-input"
+            type="file"
+            name="upload"
+            accept=".dxf"
+            required
+          />
+          <label class="button" for="nav-upload-input">CHOOSE DXF</label>
+          <span class="nav-upload-name" id="nav-upload-name">NO FILE SELECTED</span>
+          <button type="submit" class="button button-primary">INSPECT DXF</button>
+        </form>
       </nav>
 
       <main class="workspace">
@@ -46,6 +61,15 @@
       }
       refreshClock();
       setInterval(refreshClock, 1000);
+
+      const navUploadInput = document.getElementById("nav-upload-input");
+      const navUploadName = document.getElementById("nav-upload-name");
+      if (navUploadInput && navUploadName) {
+        navUploadInput.addEventListener("change", () => {
+          const file = navUploadInput.files && navUploadInput.files[0];
+          navUploadName.textContent = file ? file.name : "NO FILE SELECTED";
+        });
+      }
     </script>
   </body>
 </html>

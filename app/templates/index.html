@@ -34,20 +34,19 @@
 
     <section class="panel">
       <div class="panel-label">UPLOAD</div>
-      <form class="dense-form" action="/inspect" method="post" enctype="multipart/form-data">
-        <label class="field">
-          <span class="field-label">DXF FILE</span>
-          <input type="file" name="upload" accept=".dxf" required />
-        </label>
+      <div class="field-hint">Use the top bar to choose a DXF and start a new run.</div>
 
-        <div class="action-row">
-          <button type="submit" class="button button-primary">INSPECT DXF</button>
-        </div>
+      {% if error %}
+        <div class="inline-alert error">{{ error }}</div>
+      {% endif %}
 
-        {% if error %}
-          <div class="inline-alert error">{{ error }}</div>
-        {% endif %}
-      </form>
+      <div class="panel-subsection">
+        <div class="field-label">DEMO</div>
+        <div class="field-hint">Loads the bundled sample file and sends it to the same review flow.</div>
+        <form class="action-row" action="/inspect/demo" method="post">
+          <button type="submit" class="button">USE DEMO DXF</button>
+        </form>
+      </div>
     </section>
   </section>
 {% endblock %}

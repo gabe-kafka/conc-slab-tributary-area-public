@@ -18,6 +18,9 @@ from fascade_utils import (
 )
 
 
+RANGE_FLOOR_RE = re.compile(r'^\s*([A-Za-z]*)(\d+)\s*[-–—]\s*([A-Za-z]*)(\d+)\s*$')
+
+
 def alphanumeric_sort_key(label):
     """
     Sort key function for alphanumeric sorting.
@@ -70,6 +73,50 @@ def floor_sort_key(floor_id):
             return (floor_num, floor_str)
         # Default: alphabetical
         return (0, floor_str)
+
+
+def expand_floor_identifier(floor_id):
+    """
+    Expand grouped floor labels such as ``4-8`` or ``B1-B3`` into
+    individual floor identifiers for spreadsheet output.
+    """
+    floor_str = str(floor_id).strip()
+    match = RANGE_FLOOR_RE.fullmatch(floor_str)
+    if not match:
+        return [floor_str]
+
+    start_prefix, start_num, end_prefix, end_num = match.groups()
+    if start_prefix.upper() != end_prefix.upper():
+        return [floor_str]
+
+    start_value = int(start_num)
+    end_value = int(end_num)
+    step = 1 if end_value >= start_value else -1
+    prefix = start_prefix.upper()
+    return [f"{prefix}{value}" if prefix else str(value) for value in range(start_value, end_value + step, step)]
+
+
+def expand_floor_map(source_floor_data):
+    """
+    Duplicate grouped floor data into one spreadsheet row per represented floor.
+    """
+    expanded = {}
+    for floor_id, value_map in source_floor_data.items():
+        expanded_floor_ids = expand_floor_identifier(floor_id)
+        for expanded_floor_id in expanded_floor_ids:
+            if expanded_floor_id not in expanded:
+                expanded[expanded_floor_id] = {}
+            expanded[expanded_floor_id].update(value_map)
+    return expanded
+
+
+def expand_floor_scalar_map(source_values):
+    """Duplicate per-floor scalar values for grouped floor identifiers."""
+    expanded = {}
+    for floor_id, value in source_values.items():
+        for expanded_floor_id in expand_floor_identifier(floor_id):
+            expanded[expanded_floor_id] = value
+    return expanded
 
 
 def collect_master_matrix_data(floor_plans):
@@ -137,6 +184,8 @@ def collect_master_matrix_data(floor_plans):
                 floor_data[floor_id][label] = rounded_area
                 all_column_labels.add(label)
     
+    floor_data = expand_floor_map(floor_data)
+
     # Sort column labels alphanumerically (ascending: 1, 2, 3, ..., N)
     sorted_column_labels = sorted(list(all_column_labels), key=alphanumeric_sort_key)
     
@@ -198,6 +247,13 @@ def collect_fascade_length_data(
             floor_data[floor_id][label] = floor_data[floor_id].get(label, 0.0) + length
             all_labels.add(label)
     
+    floor_data = expand_floor_map(floor_data)
+    floor_perimeters = expand_floor_scalar_map(floor_perimeters)
+    floor_assigned_totals = expand_floor_scalar_map(floor_assigned_totals)
+    floor_thresholds = expand_floor_scalar_map(floor_thresholds)
+    floor_coverages = expand_floor_scalar_map(floor_coverages)
+    floor_max_distances = expand_floor_scalar_map(floor_max_distances)
+
     sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
     sorted_labels = sorted(list(all_labels), key=alphanumeric_sort_key)
     

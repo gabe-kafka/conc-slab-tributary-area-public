@@ -1,11 +1,35 @@
 from typing import Dict, List, Optional
 
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Polygon
 
 FASCADE_DISTANCE_THRESHOLD = 2.0  # feet
 FASCADE_MAX_DISTANCE = 15.0  # feet (max search radius if no candidates)
 FASCADE_DISTANCE_STEP = 1.0  # feet
 FASCADE_SAMPLE_SPACING = 0.5  # feet
+
+
+def facade_reference_polygon(geometry) -> Optional[Polygon]:
+    """
+    Choose the slab loop to use for façade attribution.
+
+    If a floor resolves to multiple polygons, treat smaller extra polygons as
+    balcony geometry and keep the dominant inboard slab polygon as the façade
+    reference perimeter.
+    """
+    if geometry is None or geometry.is_empty:
+        return None
+
+    if geometry.geom_type == "Polygon":
+        return geometry
+
+    polygon_geoms = [
+        geom
+        for geom in getattr(geometry, "geoms", [])
+        if getattr(geom, "geom_type", None) == "Polygon" and not geom.is_empty and geom.area > 1e-6
+    ]
+    if not polygon_geoms:
+        return None
+    return max(polygon_geoms, key=lambda geom: geom.area)
 
 
 def compute_fascade_assignments(
@@ -20,7 +44,7 @@ def compute_fascade_assignments(
 
     Returns a dict containing aggregated lengths and individual segment geometry.
     """
-    polygon = floor_plan.get('slab_polygon')
+    polygon = facade_reference_polygon(floor_plan.get('slab_polygon'))
     if polygon is None or polygon.is_empty:
         return _empty_result(distance_threshold, 0.0)
 
