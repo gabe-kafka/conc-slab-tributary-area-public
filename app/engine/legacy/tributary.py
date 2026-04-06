@@ -18,6 +18,7 @@ from fascade_utils import (
     FASCADE_SAMPLE_SPACING,
 )
 from geometry_utils import (
+    EDGE_TOLERANCE_FEET,
     build_floor_surfaces,
     line_intersects,
     load_job_config,
@@ -420,32 +421,52 @@ for floor_plan in floor_plans:
 print(f"Consolidated {len(floor_plans)} boundaries into {len(floor_groups)} floor groups")
 
 # Create new consolidated floor plans list
+# Handle edge cases:
+#   - If floor A fully contains floor B (same floor number): use the larger one
+#   - If floors are adjacent/overlapping (same floor number): merge into one
 consolidated_floor_plans = []
 for floor_number, group in floor_groups.items():
     if len(group) == 1:
         # Single boundary for this floor - use as-is
         consolidated_floor_plans.append(group[0])
     else:
-        # Multiple boundaries for this floor - merge them
-        print(f"  Floor '{floor_number}': Merging {len(group)} boundaries")
-        
-        # Merge all slab polygons using unary_union
-        merged_polygon = unary_union([fp['slab_polygon'] for fp in group])
-        
-        # Create new consolidated floor plan
-        consolidated_floor_plan = {
-            'index': len(consolidated_floor_plans),
-            'boundary_id': floor_number,  # Use floor_number as the new boundary_id
-            'floor_number': floor_number,
-            'slab_polygon': merged_polygon,
-            'column_points': [],
-            'column_indices': [],
-            'walls': [],
-            'column_labels': [],
-            'label_associations': {},
-            'unlabeled_points': []
-        }
-        consolidated_floor_plans.append(consolidated_floor_plan)
+        print(f"  Floor '{floor_number}': Processing {len(group)} boundaries")
+
+        # Sort by area descending so the largest boundary comes first
+        group.sort(key=lambda fp: fp['slab_polygon'].area, reverse=True)
+
+        # Remove boundaries fully contained within a larger boundary in this group
+        kept = []
+        for fp in group:
+            poly = fp['slab_polygon']
+            contained = False
+            for larger in kept:
+                if larger['slab_polygon'].buffer(EDGE_TOLERANCE_FEET).contains(poly):
+                    print(f"    Dropping boundary (area {poly.area:.0f} SF) — contained in larger ({larger['slab_polygon'].area:.0f} SF)")
+                    contained = True
+                    break
+            if not contained:
+                kept.append(fp)
+
+        # Merge remaining boundaries (adjacent/overlapping)
+        if len(kept) == 1:
+            consolidated_floor_plans.append(kept[0])
+        else:
+            merged_polygon = unary_union([fp['slab_polygon'] for fp in kept])
+            print(f"    Merged {len(kept)} boundaries into one ({merged_polygon.area:.0f} SF)")
+            consolidated_floor_plan = {
+                'index': len(consolidated_floor_plans),
+                'boundary_id': floor_number,
+                'floor_number': floor_number,
+                'slab_polygon': merged_polygon,
+                'column_points': [],
+                'column_indices': [],
+                'walls': [],
+                'column_labels': [],
+                'label_associations': {},
+                'unlabeled_points': []
+            }
+            consolidated_floor_plans.append(consolidated_floor_plan)
 
 # Replace floor_plans with consolidated version
 floor_plans = consolidated_floor_plans

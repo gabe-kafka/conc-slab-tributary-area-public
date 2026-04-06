@@ -230,30 +230,30 @@ def polygons_from_entities(entities: Iterable, factor: float, snap_tolerance: fl
 
 
 def build_floor_surfaces(loop_polygons: Sequence[Polygon]):
+    """Return each boundary polygon as an individual floor surface.
+
+    Previous behavior used even/odd nesting depth to subtract inner polygons
+    as holes.  In multi-story DXFs the inner boundary is a separate floor,
+    not a courtyard — subtracting it loses area.
+
+    Now: every valid closed boundary is its own surface.  Merging of
+    overlapping/adjacent floors with the same floor number happens later
+    in the consolidation step.
+    """
     if not loop_polygons:
         return []
 
-    polygons = [polygon.buffer(0) for polygon in loop_polygons if not polygon.is_empty]
-    depths = []
-    for polygon in polygons:
-        representative = polygon.representative_point()
-        depth = sum(1 for other in polygons if other != polygon and other.buffer(EDGE_TOLERANCE_FEET).contains(representative))
-        depths.append(depth)
+    surfaces = []
+    for polygon in loop_polygons:
+        clean = polygon.buffer(0)
+        if clean.is_empty or clean.area <= 1e-6:
+            continue
+        if clean.geom_type == "Polygon":
+            surfaces.append(clean)
+        elif clean.geom_type == "MultiPolygon":
+            surfaces.extend(g for g in clean.geoms if not g.is_empty)
 
-    solids = [polygon for polygon, depth in zip(polygons, depths) if depth % 2 == 0]
-    holes = [polygon for polygon, depth in zip(polygons, depths) if depth % 2 == 1]
-
-    surface = unary_union(solids)
-    if holes:
-        surface = surface.difference(unary_union(holes))
-
-    if surface.is_empty:
-        return []
-    if surface.geom_type == "Polygon":
-        return [surface]
-    if surface.geom_type == "MultiPolygon":
-        return [geom for geom in surface.geoms if not geom.is_empty]
-    return []
+    return surfaces
 
 
 def point_is_inside(polygon: Polygon, point: Point) -> bool:
