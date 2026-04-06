@@ -12,7 +12,14 @@ VORONOI_PADDING_FEET = 5.0
 CELL_EPSILON = 1e-7
 
 
-def sample_wall_support_points(wall_line, spacing: float = WALL_SUPPORT_SPACING_FEET) -> List[Point]:
+WALL_COLUMN_CLEARANCE_FEET = 2.0  # skip wall support points within this distance of a column
+
+
+def sample_wall_support_points(
+    wall_line,
+    spacing: float = WALL_SUPPORT_SPACING_FEET,
+    column_points: List[Point] | None = None,
+) -> List[Point]:
     if wall_line is None or wall_line.length <= 0:
         return []
 
@@ -23,14 +30,23 @@ def sample_wall_support_points(wall_line, spacing: float = WALL_SUPPORT_SPACING_
 
     while distance < total_length - 1e-9:
         support_point = wall_line.interpolate(distance)
-        support_points.append(Point(support_point.x, support_point.y))
+        pt = Point(support_point.x, support_point.y)
+        if not _too_close_to_column(pt, column_points):
+            support_points.append(pt)
         distance += spacing
 
     end_point = Point(wall_line.coords[-1])
-    if not support_points or support_points[-1].distance(end_point) > CELL_EPSILON:
-        support_points.append(end_point)
+    if not _too_close_to_column(end_point, column_points):
+        if not support_points or support_points[-1].distance(end_point) > CELL_EPSILON:
+            support_points.append(end_point)
 
     return support_points
+
+
+def _too_close_to_column(pt: Point, column_points: List[Point] | None) -> bool:
+    if not column_points:
+        return False
+    return any(pt.distance(cp) < WALL_COLUMN_CLEARANCE_FEET for cp in column_points)
 
 
 def solve_floor_tributary(floor_plan: Dict, threshold: float = 30.0) -> Dict:
@@ -106,6 +122,7 @@ def solve_floor_tributary(floor_plan: Dict, threshold: float = 30.0) -> Dict:
 
         try:
             merged_region = unary_union(wall_regions)
+
             total_area = merged_region.area if merged_region is not None and not merged_region.is_empty else 0.0
             wall_results[wall_idx] = {"merged_region": merged_region, "total_area": total_area}
             logs.append(f"Wall {wall_idx}: {len(wall_regions)} regions merged, Total area: {math.ceil(total_area):.0f} SF")

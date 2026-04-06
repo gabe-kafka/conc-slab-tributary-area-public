@@ -6,3 +6,7 @@ venv/
 var/
 build/
 dist/
+.next/
+web/node_modules/
+web/.next/
+.vercel/

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import json
+import os
 import uuid
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import ezdxf
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from app.runtime_paths import bundle_root, user_data_root
 from app.services.inspection import display_layer_name, save_upload
@@ -23,6 +28,22 @@ DEMO_DIR = ROOT_DIR / "demo"
 DEMO_INPUT_PATH = DEMO_DIR / "INPUT.dxf"
 
 app = FastAPI(title="Two-Way Slab Tributary Area")
+
+_allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_extra_origin = os.environ.get("CORS_ORIGIN")
+if _extra_origin:
+    _allowed_origins.append(_extra_origin)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.globals["display_layer_name"] = display_layer_name
@@ -179,6 +200,7 @@ async def job_detail_api(job_id: str):
 
 
 @app.get("/jobs/{job_id}/artifacts/{artifact_name}")
+@app.get("/api/jobs/{job_id}/artifacts/{artifact_name}")
 async def download_artifact(job_id: str, artifact_name: str):
     job = manager.get_job(job_id)
     if job is None:
@@ -189,3 +211,76 @@ async def download_artifact(job_id: str, artifact_name: str):
         raise HTTPException(status_code=404, detail="Artifact not found.")
 
     return FileResponse(path=artifact_path, filename=artifact_name)
+
+
+# --- JSON API endpoints for Next.js frontend ---
+
+
+@app.post("/api/upload")
+async def api_upload(upload: UploadFile = File(...)):
+    if not upload.filename or not upload.filename.lower().endswith(".dxf"):
+        raise HTTPException(status_code=400, detail="Upload a .dxf file.")
+
+    session_id = uuid.uuid4().hex
+    payload = await upload.read()
+    try:
+        draft = save_upload(payload, upload.filename, session_id, manager.drafts_dir)
+    except ezdxf.DXFStructureError:
+        raise HTTPException(status_code=400, detail="DXF could not be parsed.")
+
+    manager.register_draft(draft)
+    return draft.to_dict()
+
+
+@app.post("/api/upload/demo")
+async def api_upload_demo():
+    if not DEMO_INPUT_PATH.exists():
+        raise HTTPException(status_code=500, detail="Demo DXF is not available.")
+
+    session_id = uuid.uuid4().hex
+    payload = DEMO_INPUT_PATH.read_bytes()
+    draft = save_upload(payload, "DEMO_INPUT.dxf", session_id, manager.drafts_dir)
+    manager.register_draft(draft)
+    return draft.to_dict()
+
+
+class CreateJobRequest(BaseModel):
+    draft_id: str
+    source_units: str = "in"
+    layer_mapping: Dict[str, List[str]]
+
+
+@app.post("/api/jobs")
+async def api_create_job(body: CreateJobRequest):
+    draft = manager.get_draft(body.draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Draft not found.")
+
+    if not body.layer_mapping.get("boundary") or not body.layer_mapping.get("support_point"):
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least one boundary layer and one column layer.",
+        )
+
+    session_id = uuid.uuid4().hex
+    job = manager.create_job(
+        session_id=session_id,
+        draft_id=body.draft_id,
+        source_units=body.source_units,
+        layer_mapping=body.layer_mapping,
+    )
+    return {"job_id": job.id, "status": job.status}
+
+
+@app.get("/api/jobs/{job_id}/geometry")
+async def api_job_geometry(job_id: str):
+    job = manager.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    geometry_path = job.artifacts.get("geometry.json")
+    if not geometry_path or not Path(geometry_path).exists():
+        raise HTTPException(status_code=404, detail="Geometry data not available.")
+
+    data = json.loads(Path(geometry_path).read_text(encoding="utf-8"))
+    return JSONResponse(content=data)

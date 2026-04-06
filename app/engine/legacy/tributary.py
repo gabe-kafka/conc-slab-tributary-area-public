@@ -10,6 +10,7 @@ from shapely.ops import polygonize, unary_union
 import ezdxf
 from ezdxf import colors
 
+from app.services.geometry_export import export_geometry_json
 from export_column_loads import export_column_load_takedown
 from fascade_utils import (
     compute_fascade_assignments,
@@ -280,13 +281,31 @@ if not INPUT_DXF.exists():
 input_dxf = ezdxf.readfile(str(INPUT_DXF))
 input_msp = input_dxf.modelspace()
 
-# Extract configured wall entities from input
-wall_entities = [
-    entity
-    for entity in input_msp
-    if hasattr(entity.dxf, 'layer') and entity.dxf.layer in wall_layers and entity.dxftype() in {'LINE', 'LWPOLYLINE', 'POLYLINE'}
-]
-print(f"Found {len(wall_entities)} WALL entities in input DXF")
+# Extract configured wall entities from input, including entities inside block references
+wall_entities = []
+for entity in input_msp:
+    if not hasattr(entity.dxf, 'layer'):
+        continue
+    if entity.dxf.layer in wall_layers:
+        if entity.dxftype() in {'LINE', 'LWPOLYLINE', 'POLYLINE'}:
+            wall_entities.append(entity)
+        elif entity.dxftype() == 'INSERT':
+            # Explode block references to get contained geometry with transforms applied
+            try:
+                for child in entity.virtual_entities():
+                    if child.dxftype() in {'LINE', 'LWPOLYLINE', 'POLYLINE'}:
+                        wall_entities.append(child)
+            except Exception as e:
+                print(f"Warning: Could not explode block '{entity.dxf.name}' on WALL layer: {e}")
+    elif entity.dxftype() == 'INSERT':
+        # Also check INSERT entities on other layers whose block contains wall-layer geometry
+        try:
+            for child in entity.virtual_entities():
+                if hasattr(child.dxf, 'layer') and child.dxf.layer in wall_layers and child.dxftype() in {'LINE', 'LWPOLYLINE', 'POLYLINE'}:
+                    wall_entities.append(child)
+        except Exception:
+            pass
+print(f"Found {len(wall_entities)} WALL entities in input DXF (including exploded blocks)")
 
 # --- Extract wall entities and generate support points ---
 wall_data_list = []
@@ -726,6 +745,19 @@ def half_plane_polygon(P, Q, bbox):
     if len(pts) < 3:
         return None
     return Polygon(pts).convex_hull
+
+# --- Resample wall support points with column clearance ---
+# Now that both walls and columns are assigned to floors, resample wall support
+# points to skip any that are too close to a column. This prevents wall Voronoi
+# cells from crowding out columns near balconies and edges.
+for floor_plan in floor_plans:
+    col_pts = floor_plan.get('column_points', [])
+    for wall_data in floor_plan.get('walls', []):
+        wall_line = wall_data.get('wall_line')
+        if wall_line and col_pts:
+            wall_data['support_points'] = sample_wall_support_points(
+                wall_line, spacing=WALL_SUPPORT_SPACING_FEET, column_points=col_pts
+            )
 
 # --- Process each floor plan independently to calculate tributary regions ---
 print("\n=== Tributary Region Calculation ===")
@@ -1359,6 +1391,12 @@ try:
 except Exception as e:
     print(f"\n⚠ WARNING: Excel export failed: {e}")
     print("  DXF output was successful, but Excel file could not be created.")
+
+# --- Export geometry JSON for web frontend ---
+try:
+    export_geometry_json(floor_plans, output_path="geometry.json")
+except Exception as e:
+    print(f"\n⚠ WARNING: Geometry JSON export failed: {e}")
 
 print("\n" + "="*60)
 print("LAYER COLOR LEGEND")

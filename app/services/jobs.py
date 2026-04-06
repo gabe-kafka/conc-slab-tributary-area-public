@@ -166,10 +166,13 @@ class JobManager:
         artifacts = {}
         dxf_artifact = workspace / "tributary_output_fixed.dxf"
         xlsx_artifact = workspace / "column_load_takedown.xlsx"
+        geometry_artifact = workspace / "geometry.json"
         if dxf_artifact.exists():
             artifacts["tributary_output.dxf"] = str(dxf_artifact)
         if xlsx_artifact.exists():
             artifacts["column_load_takedown.xlsx"] = str(xlsx_artifact)
+        if geometry_artifact.exists():
+            artifacts["geometry.json"] = str(geometry_artifact)
 
         warnings = [line for line in self.get_job(job_id).logs if "warning" in line.lower()]
         self._set_job(job_id, status="completed", artifacts=artifacts, warnings=warnings)

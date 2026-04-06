@@ -1,0 +1,153 @@
+"""Serialize floor_plans geometry data to JSON for frontend canvas rendering."""
+from __future__ import annotations
+
+import json
+import math
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from shapely.geometry import mapping
+
+
+COORD_PRECISION = 4
+SIMPLIFY_TOLERANCE = 0.05  # feet
+
+
+def _round_coords(geojson: Dict) -> Dict:
+    """Round all coordinates in a GeoJSON geometry dict to COORD_PRECISION."""
+
+    def _round_ring(ring):
+        return [[round(c, COORD_PRECISION) for c in pt] for pt in ring]
+
+    geom_type = geojson.get("type")
+    coords = geojson.get("coordinates")
+    if coords is None:
+        return geojson
+
+    if geom_type == "Point":
+        geojson["coordinates"] = [round(c, COORD_PRECISION) for c in coords]
+    elif geom_type == "LineString":
+        geojson["coordinates"] = _round_ring(coords)
+    elif geom_type == "Polygon":
+        geojson["coordinates"] = [_round_ring(ring) for ring in coords]
+    elif geom_type == "MultiPolygon":
+        geojson["coordinates"] = [
+            [_round_ring(ring) for ring in polygon] for polygon in coords
+        ]
+    return geojson
+
+
+def _serialize_geometry(geom, simplify: bool = True) -> Optional[Dict]:
+    """Convert a Shapely geometry to a rounded GeoJSON dict."""
+    if geom is None or geom.is_empty:
+        return None
+    if simplify and hasattr(geom, "simplify"):
+        geom = geom.simplify(SIMPLIFY_TOLERANCE, preserve_topology=True)
+    return _round_coords(mapping(geom))
+
+
+def _serialize_column(
+    col_idx: int,
+    floor_plan: Dict,
+    facade_length_map: Dict[str, float],
+) -> Dict[str, Any]:
+    label = floor_plan["column_labels"][col_idx]
+    point = floor_plan["column_points"][col_idx]
+    region = floor_plan["regions"][col_idx] if col_idx < len(floor_plan.get("regions", [])) else None
+    area = floor_plan["areas"][col_idx] if col_idx < len(floor_plan.get("areas", [])) else 0.0
+
+    return {
+        "index": col_idx,
+        "label": label,
+        "point": [round(point.x, COORD_PRECISION), round(point.y, COORD_PRECISION)],
+        "tributary_region": _serialize_geometry(region),
+        "area_sf": round(area, 2),
+        "area_sf_ceil": math.ceil(area) if area > 0 else 0,
+        "facade_length_ft": round(facade_length_map.get(label, 0.0), 2),
+    }
+
+
+def _serialize_wall(wall_data: Dict) -> Dict[str, Any]:
+    return {
+        "wall_index": wall_data["wall_index"],
+        "wall_line": _serialize_geometry(wall_data.get("wall_line"), simplify=False),
+        "tributary_region": _serialize_geometry(wall_data.get("merged_region")),
+        "area_sf": round(wall_data.get("total_area", 0.0), 2),
+        "area_sf_ceil": math.ceil(wall_data.get("total_area", 0.0)),
+    }
+
+
+def _serialize_facade_segments(fascade_data: Optional[Dict]) -> List[Dict]:
+    if not fascade_data or not fascade_data.get("segments"):
+        return []
+    segments = []
+    for seg in fascade_data["segments"]:
+        coords = seg.get("polyline_points", [])
+        segments.append({
+            "label": seg.get("label"),
+            "type": seg.get("type"),
+            "length_ft": round(seg.get("length", 0.0), 2),
+            "polyline": [[round(x, COORD_PRECISION), round(y, COORD_PRECISION)] for x, y in coords],
+        })
+    return segments
+
+
+def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
+    """Serialize all floor plans to a JSON-serializable dict for the frontend."""
+    min_x = min_y = float("inf")
+    max_x = max_y = float("-inf")
+
+    floors = []
+    for fp in floor_plans:
+        slab = fp.get("slab_polygon")
+        if slab is None or slab.is_empty:
+            continue
+
+        # Update bounding box
+        bounds = slab.bounds  # (minx, miny, maxx, maxy)
+        min_x = min(min_x, bounds[0])
+        min_y = min(min_y, bounds[1])
+        max_x = max(max_x, bounds[2])
+        max_y = max(max_y, bounds[3])
+
+        # Facade length map for this floor
+        fascade_data = fp.get("fascade_data")
+        facade_length_map = fascade_data.get("length_map", {}) if fascade_data else {}
+
+        # Serialize columns
+        column_count = len(fp.get("column_points", []))
+        columns = [
+            _serialize_column(i, fp, facade_length_map)
+            for i in range(column_count)
+        ]
+
+        # Serialize walls
+        walls = [_serialize_wall(w) for w in fp.get("walls", [])]
+
+        floors.append({
+            "floor_id": fp.get("floor_number", fp.get("boundary_id", f"FLOOR_{fp['index']}")),
+            "floor_index": fp["index"],
+            "slab_boundary": _serialize_geometry(slab, simplify=False),
+            "columns": columns,
+            "walls": walls,
+            "facade_segments": _serialize_facade_segments(fascade_data),
+            "facade_perimeter_ft": round(fascade_data.get("perimeter", 0.0), 2) if fascade_data else 0.0,
+        })
+
+    return {
+        "floors": floors,
+        "bounds": {
+            "min_x": round(min_x, COORD_PRECISION) if min_x != float("inf") else 0,
+            "min_y": round(min_y, COORD_PRECISION) if min_y != float("inf") else 0,
+            "max_x": round(max_x, COORD_PRECISION) if max_x != float("inf") else 0,
+            "max_y": round(max_y, COORD_PRECISION) if max_y != float("inf") else 0,
+        },
+        "floor_count": len(floors),
+    }
+
+
+def export_geometry_json(floor_plans: List[Dict], output_path: str = "geometry.json") -> None:
+    """Serialize floor plans and write to a JSON file."""
+    data = serialize_floor_plans(floor_plans)
+    Path(output_path).write_text(json.dumps(data), encoding="utf-8")
+    print(f"\n✓ Geometry JSON export: {output_path} ({len(data['floors'])} floor(s))")

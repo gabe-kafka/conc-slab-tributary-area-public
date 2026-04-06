@@ -33,6 +33,17 @@ class DraftUpload:
     inferred_floor_area_sf: float
     require_unit_confirmation: bool
 
+    def to_dict(self) -> Dict:
+        return {
+            "id": self.id,
+            "filename": self.filename,
+            "layers": self.layers,
+            "layer_counts": self.layer_counts,
+            "suggestions": self.suggestions,
+            "inferred_floor_area_sf": self.inferred_floor_area_sf,
+            "require_unit_confirmation": self.require_unit_confirmation,
+        }
+
 
 def save_upload(upload_bytes: bytes, filename: str, session_id: str, drafts_dir: Path) -> DraftUpload:
     draft_id = uuid.uuid4().hex
