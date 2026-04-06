@@ -59,20 +59,37 @@ export default function TributaryCanvas({
 
   const transform = computeViewTransform(bounds, size.width, size.height);
 
-  // Trackpad: pinch-to-zoom (ctrlKey) + two-finger pan; mouse: scroll = zoom
+  // CAD-style navigation:
+  // - Scroll wheel = zoom at cursor
+  // - Trackpad pinch (ctrlKey) = zoom at cursor
+  // - Trackpad two-finger scroll = pan
+  // - Middle-click drag = pan
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0 });
+
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const stage = stageRef.current;
     if (!stage) return;
 
-    if (e.evt.ctrlKey || e.evt.metaKey) {
-      // Pinch-to-zoom (trackpad) or ctrl+scroll (mouse)
+    const isTrackpadPan = !e.evt.ctrlKey && !e.evt.metaKey && e.evt.deltaX !== 0;
+
+    if (isTrackpadPan) {
+      // Two-finger trackpad scroll = pan
+      stage.position({
+        x: stage.x() - e.evt.deltaX,
+        y: stage.y() - e.evt.deltaY,
+      });
+    } else {
+      // Scroll wheel or pinch = zoom at cursor
       const oldScale = stage.scaleX();
       const pointer = stage.getPointerPosition();
       if (!pointer) return;
 
-      const zoom = 1 - e.evt.deltaY * 0.01;
-      const newScale = Math.max(0.05, Math.min(oldScale * zoom, 100));
+      const zoomFactor = e.evt.ctrlKey
+        ? 1 - e.evt.deltaY * 0.01       // trackpad pinch (fine)
+        : 1 - e.evt.deltaY * 0.002;     // scroll wheel (coarser steps)
+      const newScale = Math.max(0.05, Math.min(oldScale * zoomFactor, 100));
 
       const mousePointTo = {
         x: (pointer.x - stage.x()) / oldScale,
@@ -85,14 +102,32 @@ export default function TributaryCanvas({
         y: pointer.y - mousePointTo.y * newScale,
       });
       setStageScale(newScale);
-    } else {
-      // Two-finger scroll = pan
-      stage.position({
-        x: stage.x() - e.evt.deltaX,
-        y: stage.y() - e.evt.deltaY,
-      });
     }
     stage.batchDraw();
+  }, []);
+
+  // Middle-click drag = pan
+  const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (e.evt.button === 1) {
+      e.evt.preventDefault();
+      isPanningRef.current = true;
+      panStartRef.current = { x: e.evt.clientX, y: e.evt.clientY };
+    }
+  }, []);
+
+  const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (!isPanningRef.current) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const dx = e.evt.clientX - panStartRef.current.x;
+    const dy = e.evt.clientY - panStartRef.current.y;
+    panStartRef.current = { x: e.evt.clientX, y: e.evt.clientY };
+    stage.position({ x: stage.x() + dx, y: stage.y() + dy });
+    stage.batchDraw();
+  }, []);
+
+  const handleMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (e.evt.button === 1) isPanningRef.current = false;
   }, []);
 
   return (
@@ -102,6 +137,11 @@ export default function TributaryCanvas({
         width={size.width}
         height={size.height}
         onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onContextMenu={(e) => e.evt.preventDefault()}
+        style={{ cursor: isPanningRef.current ? "grabbing" : "default" }}
       >
         {floors.map((floor) => {
           if (!visibleFloors.has(floor.floor_id)) return null;
