@@ -9,4 +9,6 @@ services:
         value: "3.12.8"
       - key: TRIBUTARY_APP_DATA
         value: /tmp/tributary-data
+      - key: CORS_ORIGIN
+        value: https://web-nine-sigma-79.vercel.app
     plan: free
