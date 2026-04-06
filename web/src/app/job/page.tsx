@@ -44,7 +44,17 @@ function JobPageInner() {
         }
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to fetch job.");
+      const msg = e instanceof Error ? e.message : "Failed to fetch job.";
+      if (msg.includes("404")) {
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+        }
+        sessionStorage.removeItem("draft");
+        router.replace("/?expired=1");
+        return;
+      }
+      setError(msg);
     }
   }, [jobId]);
 

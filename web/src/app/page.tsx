@@ -1,16 +1,20 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useCallback, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useRef, useState } from "react";
 import { uploadDemo, uploadDxf } from "@/lib/api";
 import type { DraftData } from "@/lib/types";
 
-export default function UploadPage() {
+function UploadPageInner() {
   const router = useRouter();
+  const params = useSearchParams();
+  const expired = params.get("expired") === "1";
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    expired ? "Session expired \u2014 please re-upload your DXF." : null,
+  );
   const [filename, setFilename] = useState<string | null>(null);
 
   const handleDraft = useCallback(
@@ -134,5 +138,13 @@ export default function UploadPage() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function UploadPage() {
+  return (
+    <Suspense>
+      <UploadPageInner />
+    </Suspense>
   );
 }
