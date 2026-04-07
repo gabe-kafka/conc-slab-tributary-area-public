@@ -12,6 +12,7 @@ export interface DraftData {
   suggestions: { [role: string]: string[] };
   inferred_floor_area_sf: number;
   require_unit_confirmation: boolean;
+  blob_url: string;
 }
 
 export interface LayerMapping {
@@ -22,22 +23,15 @@ export interface LayerMapping {
   floor_label: string[];
 }
 
-// --- Job ---
+// --- Process Result ---
 
-export interface JobData {
-  id: string;
-  session_id: string;
-  draft_id: string;
-  input_filename: string;
-  source_units: string;
-  layer_mapping: LayerMapping;
-  status: "queued" | "running" | "completed" | "failed" | "needs_review";
-  created_at: string;
-  updated_at: string;
-  warnings: string[];
-  error_message: string;
+export interface ProcessResult {
+  status: "completed" | "failed" | "needs_review";
+  geometry: GeometryPayload | null;
+  artifacts: { dxf_url: string | null; xlsx_url: string | null };
   logs: string[];
-  artifacts: { [name: string]: string };
+  warnings: string[];
+  error_message?: string;
 }
 
 // --- Geometry (canvas rendering) ---

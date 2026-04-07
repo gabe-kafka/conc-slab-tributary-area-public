@@ -1,0 +1,114 @@
+"""Vercel Python Function: DXF upload and inspection.
+
+Handles both file uploads (multipart/form-data) and demo requests (JSON).
+Parses DXF layers, uploads to Vercel Blob, returns draft metadata.
+"""
+
+from __future__ import annotations
+
+import cgi
+import json
+import os
+import sys
+from http.server import BaseHTTPRequestHandler
+from pathlib import Path
+
+# Add engine directory to Python path
+ENGINE_DIR = str(Path(__file__).parent / "_engine")
+if ENGINE_DIR not in sys.path:
+    sys.path.insert(0, ENGINE_DIR)
+
+from inspection_utils import inspect_dxf_bytes  # noqa: E402
+from blob_utils import blob_put  # noqa: E402
+
+DEMO_PATH = Path(__file__).parent / "_engine" / "demo" / "INPUT.dxf"
+
+
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_type = self.headers.get("Content-Type", "")
+
+        try:
+            if "multipart/form-data" in content_type:
+                payload, filename = self._parse_multipart()
+            elif "application/json" in content_type:
+                payload, filename = self._parse_json_demo()
+            else:
+                self._error(400, "Expected multipart/form-data or application/json")
+                return
+
+            if not filename.lower().endswith(".dxf"):
+                self._error(400, "Upload a .dxf file.")
+                return
+
+            # Parse DXF and extract layer metadata
+            draft = inspect_dxf_bytes(payload, filename)
+
+            # Upload DXF to Vercel Blob for later retrieval during processing
+            blob_result = blob_put(
+                f"drafts/{draft['id']}.dxf",
+                payload,
+                access="private",
+                content_type="application/octet-stream",
+                add_random_suffix=False,
+            )
+            draft["blob_url"] = blob_result["url"]
+
+            self._json_response(200, draft)
+
+        except Exception as e:
+            self._error(500, str(e))
+
+    def _parse_multipart(self) -> tuple[bytes, str]:
+        """Parse multipart/form-data and extract the uploaded file."""
+        environ = {
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+            "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
+        }
+        form = cgi.FieldStorage(
+            fp=self.rfile,
+            headers=self.headers,
+            environ=environ,
+        )
+        file_item = form["upload"]
+        if isinstance(file_item, list):
+            file_item = file_item[0]
+        payload = file_item.file.read()
+        filename = file_item.filename or "upload.dxf"
+        return payload, filename
+
+    def _parse_json_demo(self) -> tuple[bytes, str]:
+        """Handle demo request: read bundled demo DXF."""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 0:
+            raw = self.rfile.read(content_length)
+            # Vercel runtime may return str or bytes
+            if isinstance(raw, str):
+                raw = raw.encode("utf-8")
+            body = json.loads(raw)
+        else:
+            body = {}
+
+        if not body.get("demo"):
+            raise ValueError("JSON body must contain {\"demo\": true}")
+
+        if not DEMO_PATH.exists():
+            raise FileNotFoundError("Demo DXF is not available.")
+
+        return DEMO_PATH.read_bytes(), "DEMO_INPUT.dxf"
+
+    def _json_response(self, status: int, data: dict) -> None:
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _error(self, status: int, message: str) -> None:
+        self._json_response(status, {"detail": message})
+
+    def log_message(self, format, *args):
+        # Suppress default stderr logging
+        pass

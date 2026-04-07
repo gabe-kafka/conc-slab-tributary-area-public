@@ -1,0 +1,14 @@
+{
+  "functions": {
+    "api/upload.py": {
+      "maxDuration": 30,
+      "memory": 1024,
+      "includeFiles": "api/_engine/**"
+    },
+    "api/process.py": {
+      "maxDuration": 300,
+      "memory": 2048,
+      "includeFiles": "api/_engine/**"
+    }
+  }
+}

@@ -1,9 +1,9 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { fetchGeometry, fetchJob, artifactUrl } from "@/lib/api";
-import type { GeometryPayload, JobData } from "@/lib/types";
+import { processJob } from "@/lib/api";
+import type { ProcessResult } from "@/lib/types";
 import dynamic from "next/dynamic";
 
 const ResultsView = dynamic(() => import("@/components/ResultsView"), {
@@ -17,123 +17,104 @@ const ResultsView = dynamic(() => import("@/components/ResultsView"), {
 
 function JobPageInner() {
   const router = useRouter();
-  const params = useSearchParams();
-  const jobId = params.get("id");
-  const [job, setJob] = useState<JobData | null>(null);
-  const [geometry, setGeometry] = useState<GeometryPayload | null>(null);
+  const [result, setResult] = useState<ProcessResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [processing, setProcessing] = useState(true);
+  const called = useRef(false);
 
-  const poll = useCallback(async () => {
-    if (!jobId) return;
-    try {
-      const j = await fetchJob(jobId);
-      setJob(j);
-      if (j.status === "completed" || j.status === "failed" || j.status === "needs_review") {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-        if (j.status === "completed") {
-          try {
-            const geo = await fetchGeometry(jobId);
-            setGeometry(geo);
-          } catch {
-            // geometry may not be available
-          }
-        }
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to fetch job.";
-      if (msg.includes("404")) {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-        sessionStorage.removeItem("draft");
-        router.replace("/?expired=1");
-        return;
-      }
-      setError(msg);
-    }
-  }, [jobId]);
-
-  useEffect(() => {
-    if (!jobId) {
+  const run = useCallback(async () => {
+    const raw = sessionStorage.getItem("processParams");
+    if (!raw) {
       router.replace("/");
       return;
     }
-    poll();
-    intervalRef.current = setInterval(poll, 1500);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [jobId, poll, router]);
 
-  if (!jobId) return null;
+    try {
+      const params = JSON.parse(raw);
+      const res = await processJob(
+        params.blob_url,
+        params.source_units,
+        params.layer_mapping,
+      );
+      setResult(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Processing failed.");
+    } finally {
+      setProcessing(false);
+      sessionStorage.removeItem("processParams");
+    }
+  }, [router]);
 
-  if (error) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-error bg-error/10 border border-error/20 px-4 py-3 text-[12px] max-w-md">
-          {error}
-        </div>
-      </div>
-    );
+  useEffect(() => {
+    if (called.current) return;
+    called.current = true;
+    run();
+  }, [run]);
+
+  // Show results view once geometry is available
+  if (result?.status === "completed" && result.geometry) {
+    return <ResultsView result={result} geometry={result.geometry} />;
   }
 
-  // Show results view once geometry is loaded
-  if (geometry && job) {
-    return <ResultsView job={job} geometry={geometry} />;
-  }
-
-  // Job processing view
+  // Processing / error view
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
       <div className="w-full max-w-lg space-y-4">
         <div className="flex items-center justify-between">
           <h1 className="text-sm font-semibold text-text-primary">
-            {job?.status === "failed"
-              ? "Job Failed"
-              : job?.status === "needs_review"
-                ? "Needs Review"
-                : "Computing..."}
+            {processing
+              ? "Computing..."
+              : result?.status === "failed"
+                ? "Job Failed"
+                : result?.status === "needs_review"
+                  ? "Needs Review"
+                  : "Complete"}
           </h1>
-          {job && (
-            <StatusChip status={job.status} />
-          )}
+          {result && <StatusChip status={result.status} />}
         </div>
 
         {/* Progress bar */}
         <div className="w-full h-1 bg-bg-surface overflow-hidden">
-          <div
-            className={`h-full transition-all duration-500 ${
-              job?.status === "failed"
-                ? "bg-error"
-                : job?.status === "completed"
-                  ? "bg-success"
-                  : "bg-accent"
-            }`}
-            style={{ width: `${deriveProgress(job)}%` }}
-          />
+          {processing ? (
+            <div className="h-full bg-accent animate-pulse w-full" />
+          ) : (
+            <div
+              className={`h-full w-full ${
+                result?.status === "failed"
+                  ? "bg-error"
+                  : "bg-success"
+              }`}
+            />
+          )}
         </div>
 
-        {/* Log viewer */}
-        {job && job.logs.length > 0 && (
-          <div className="bg-bg-surface border border-border-panel p-3 max-h-64 overflow-auto">
-            <pre className="text-[11px] text-text-muted leading-relaxed whitespace-pre-wrap">
-              {job.logs.slice(-30).join("\n")}
-            </pre>
+        {processing && (
+          <p className="text-text-muted text-[11px]">
+            Computing tributary areas... this may take a moment.
+          </p>
+        )}
+
+        {/* Error display */}
+        {error && (
+          <div className="text-error bg-error/10 border border-error/20 px-4 py-3 text-[12px] max-w-md">
+            {error}
+          </div>
+        )}
+
+        {/* Engine error message */}
+        {result?.error_message && (
+          <div className="text-error text-[12px] bg-error/10 border border-error/20 px-3 py-2">
+            {result.error_message.slice(-500)}
           </div>
         )}
 
         {/* Warnings */}
-        {job && job.warnings.length > 0 && (
+        {result && result.warnings.length > 0 && (
           <div className="bg-warning/5 border border-warning/20 p-3">
             <div className="text-warning text-[11px] font-medium mb-1">
               Warnings
             </div>
-            {job.warnings.map((w, i) => (
+            {result.warnings.map((w, i) => (
               <div key={i} className="text-text-muted text-[11px]">
                 {w}
               </div>
@@ -141,27 +122,34 @@ function JobPageInner() {
           </div>
         )}
 
-        {/* Error message */}
-        {job?.status === "failed" && job.error_message && (
-          <div className="text-error text-[12px] bg-error/10 border border-error/20 px-3 py-2">
-            {job.error_message.slice(-500)}
-          </div>
+        {/* Logs (collapsed by default after completion) */}
+        {result && result.logs.length > 0 && !processing && (
+          <details className="text-[11px]">
+            <summary className="text-text-muted cursor-pointer hover:text-text-secondary">
+              Show processing logs ({result.logs.length} lines)
+            </summary>
+            <div className="bg-bg-surface border border-border-panel p-3 max-h-64 overflow-auto mt-2">
+              <pre className="text-[11px] text-text-muted leading-relaxed whitespace-pre-wrap">
+                {result.logs.slice(-30).join("\n")}
+              </pre>
+            </div>
+          </details>
         )}
 
-        {/* Download buttons for completed without geometry */}
-        {job?.status === "completed" && !geometry && (
+        {/* Download buttons (fallback if geometry failed to load) */}
+        {result?.status === "completed" && !result.geometry && (
           <div className="flex gap-3">
-            {job.artifacts["tributary_output.dxf"] && (
+            {result.artifacts.dxf_url && (
               <a
-                href={artifactUrl(jobId, "tributary_output.dxf")}
+                href={`/api/download?url=${encodeURIComponent(result.artifacts.dxf_url)}`}
                 className="px-4 py-1.5 text-[12px] bg-accent text-white hover:bg-accent-hover transition-colors"
               >
                 Download DXF
               </a>
             )}
-            {job.artifacts["column_load_takedown.xlsx"] && (
+            {result.artifacts.xlsx_url && (
               <a
-                href={artifactUrl(jobId, "column_load_takedown.xlsx")}
+                href={`/api/download?url=${encodeURIComponent(result.artifacts.xlsx_url)}`}
                 className="px-4 py-1.5 text-[12px] border border-border-panel text-text-secondary hover:text-text-primary transition-colors"
               >
                 Download XLSX
@@ -197,47 +185,15 @@ export default function JobPage() {
 
 function StatusChip({ status }: { status: string }) {
   const colors: Record<string, string> = {
-    queued: "text-text-muted border-border-panel",
-    running: "text-accent border-accent/30",
     completed: "text-success border-success/30",
     failed: "text-error border-error/30",
     needs_review: "text-warning border-warning/30",
   };
   return (
     <span
-      className={`text-[10px] uppercase tracking-wider border px-2 py-0.5 ${colors[status] || ""}`}
+      className={`text-[10px] uppercase tracking-wider border px-2 py-0.5 ${colors[status] || "text-text-muted border-border-panel"}`}
     >
       {status}
     </span>
   );
-}
-
-const PROGRESS_PATTERNS: [RegExp, number][] = [
-  [/starting extract_dxf_data/i, 5],
-  [/starting tributary/i, 15],
-  [/Floor Number Association/i, 25],
-  [/Consolidating Floor Plans/i, 35],
-  [/Column Association/i, 45],
-  [/Tributary Area Calculation/i, 55],
-  [/Facade Attribution/i, 70],
-  [/DXF output file created/i, 80],
-  [/Excel export/i, 90],
-  [/Geometry JSON export/i, 95],
-  [/LAYER COLOR LEGEND/i, 100],
-];
-
-function deriveProgress(job: JobData | null): number {
-  if (!job) return 0;
-  if (job.status === "completed") return 100;
-  if (job.status === "failed") return 100;
-  if (job.status === "queued") return 2;
-
-  let progress = 5;
-  const combined = job.logs.join("\n");
-  for (const [pattern, pct] of PROGRESS_PATTERNS) {
-    if (pattern.test(combined)) {
-      progress = Math.max(progress, pct);
-    }
-  }
-  return progress;
 }

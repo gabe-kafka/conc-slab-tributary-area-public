@@ -2,15 +2,14 @@
 
 import { useCallback, useMemo, useState } from "react";
 import TributaryCanvas from "./canvas/TributaryCanvas";
-import { artifactUrl } from "@/lib/api";
-import type { ColumnData, GeometryPayload, JobData, WallData } from "@/lib/types";
+import type { ColumnData, GeometryPayload, ProcessResult, WallData } from "@/lib/types";
 
 interface ResultsViewProps {
-  job: JobData;
+  result: ProcessResult;
   geometry: GeometryPayload;
 }
 
-export default function ResultsView({ job, geometry }: ResultsViewProps) {
+export default function ResultsView({ result, geometry }: ResultsViewProps) {
   const [visibleFloors, setVisibleFloors] = useState<Set<string>>(
     () => new Set(geometry.floors.map((f) => f.floor_id)),
   );
@@ -102,8 +101,6 @@ export default function ResultsView({ job, geometry }: ResultsViewProps) {
       {/* Top bar */}
       <div className="h-9 flex items-center justify-between px-3 border-b border-border-panel bg-bg-surface">
         <div className="flex items-center gap-3 text-[11px]">
-          <span className="text-text-secondary">{job.input_filename}</span>
-          <span className="text-text-muted">|</span>
           <span className="text-text-muted">
             {geometry.floor_count} floor(s)
           </span>
@@ -113,17 +110,17 @@ export default function ResultsView({ job, geometry }: ResultsViewProps) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {job.artifacts["tributary_output.dxf"] && (
+          {result.artifacts.dxf_url && (
             <a
-              href={artifactUrl(job.id, "tributary_output.dxf")}
+              href={`/api/download?url=${encodeURIComponent(result.artifacts.dxf_url)}`}
               className="px-3 py-0.5 text-[10px] uppercase tracking-wider border border-border-panel text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors"
             >
               DXF
             </a>
           )}
-          {job.artifacts["column_load_takedown.xlsx"] && (
+          {result.artifacts.xlsx_url && (
             <a
-              href={artifactUrl(job.id, "column_load_takedown.xlsx")}
+              href={`/api/download?url=${encodeURIComponent(result.artifacts.xlsx_url)}`}
               className="px-3 py-0.5 text-[10px] uppercase tracking-wider border border-border-panel text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors"
             >
               XLSX

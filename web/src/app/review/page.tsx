@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createJob } from "@/lib/api";
 import type { DraftData, LayerMapping } from "@/lib/types";
 
 const ROLES = [
@@ -79,7 +78,7 @@ export default function ReviewPage() {
     ];
   }, [draft]);
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = useCallback(() => {
     if (!draft) return;
     if (!mapping.boundary.length || !mapping.support_point.length) {
       setError("Select at least one boundary layer and one column layer.");
@@ -87,13 +86,15 @@ export default function ReviewPage() {
     }
     setError(null);
     setLoading(true);
-    try {
-      const { job_id } = await createJob(draft.id, units, mapping);
-      router.push(`/job?id=${job_id}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create job.");
-      setLoading(false);
-    }
+    sessionStorage.setItem(
+      "processParams",
+      JSON.stringify({
+        blob_url: draft.blob_url,
+        source_units: units,
+        layer_mapping: mapping,
+      }),
+    );
+    router.push("/job");
   }, [draft, mapping, units, router]);
 
   if (!draft) {
@@ -215,7 +216,7 @@ export default function ReviewPage() {
           disabled={loading}
           className="px-6 py-1.5 text-[12px] bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-40"
         >
-          {loading ? "Queuing..." : "Compute Tributary Areas"}
+          {loading ? "Loading..." : "Compute Tributary Areas"}
         </button>
       </div>
     </div>
