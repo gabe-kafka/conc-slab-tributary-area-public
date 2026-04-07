@@ -21,8 +21,7 @@ from fascade_utils import (
 
 RANGE_FLOOR_RE = re.compile(r'^\s*([A-Za-z]*)(\d+)\s*[-–—]\s*([A-Za-z]*)(\d+)\s*$')
 
-BOUNDARY_TOUCH_TOLERANCE = 0.05  # ft — minimum shared boundary length to count as touching slab edge
-CORNER_BUFFER_TOLERANCE = 0.1    # ft — buffer around region for slab vertex containment check
+CORNER_ANGLE_THRESHOLD = 160.0  # degrees — vertices with interior angle below this are "true corners"
 
 
 def alphanumeric_sort_key(label):
@@ -123,49 +122,105 @@ def expand_floor_scalar_map(source_values):
     return expanded
 
 
-def _extract_slab_vertices(slab_polygon):
-    """Extract all exterior ring vertices from a slab polygon (Polygon or MultiPolygon)."""
-    vertices = []
-    if slab_polygon.geom_type == 'Polygon':
-        vertices = [Point(coord) for coord in slab_polygon.exterior.coords[:-1]]
-    elif slab_polygon.geom_type == 'MultiPolygon':
-        for part in slab_polygon.geoms:
-            vertices.extend(Point(coord) for coord in part.exterior.coords[:-1])
-    return vertices
+def _vertex_angle(prev, vertex, nxt):
+    """Compute interior angle at a polygon vertex in degrees."""
+    v1 = (prev[0] - vertex[0], prev[1] - vertex[1])
+    v2 = (nxt[0] - vertex[0], nxt[1] - vertex[1])
+    mag1 = math.hypot(v1[0], v1[1])
+    mag2 = math.hypot(v2[0], v2[1])
+    if mag1 < 1e-10 or mag2 < 1e-10:
+        return 180.0
+    cos_angle = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (mag1 * mag2)))
+    return math.degrees(math.acos(cos_angle))
 
 
-def classify_column_position(col_idx, regions, slab_polygon):
+def _extract_building_corners(slab_polygon):
+    """Extract true building corners using the convex hull.
+
+    The convex hull smooths out notches, setbacks, and re-entrant corners,
+    leaving only the vertices that define the overall building footprint.
+    Vertices where the hull turns significantly (< CORNER_ANGLE_THRESHOLD)
+    are classified as building corners.
     """
-    Classify a column as center, edge, or corner based on its tributary region.
+    hull = slab_polygon.convex_hull
+    if hull.geom_type != 'Polygon':
+        return []
 
-    Returns KLL value: 4 (center), 3 (edge), or 2 (corner).
+    coords = list(hull.exterior.coords)
+    if coords[0] == coords[-1]:
+        coords = coords[:-1]
+    n = len(coords)
+    if n < 3:
+        return []
+
+    corners = []
+    for i in range(n):
+        prev = coords[(i - 1) % n]
+        curr = coords[i]
+        nxt = coords[(i + 1) % n]
+        angle = _vertex_angle(prev, curr, nxt)
+        if angle < CORNER_ANGLE_THRESHOLD:
+            corners.append(Point(curr))
+    return corners
+
+
+def _compute_edge_threshold(column_points, slab_polygon):
+    """Compute a threshold separating edge columns from interior columns.
+
+    Uses the largest gap in sorted column-to-boundary distances.
+    Falls back to half the median distance when no clear gap exists.
     """
-    if not regions or col_idx >= len(regions):
-        return 4
+    if not column_points:
+        return 5.0
+    boundary = slab_polygon.boundary
+    dists = sorted(pt.distance(boundary) for pt in column_points)
+    if len(dists) < 2:
+        return dists[0] + 1.0
 
-    region = regions[col_idx]
-    if region.is_empty or region.geom_type not in ('Polygon', 'MultiPolygon'):
-        return 4
+    max_gap = 0.0
+    threshold = dists[-1] / 2.0
+    for i in range(len(dists) - 1):
+        gap = dists[i + 1] - dists[i]
+        if gap > max_gap:
+            max_gap = gap
+            threshold = (dists[i] + dists[i + 1]) / 2.0
+    return threshold
 
-    # If MultiPolygon region, use the largest part
-    if region.geom_type == 'MultiPolygon':
-        region = max(region.geoms, key=lambda g: g.area)
 
-    # Check if the tributary region boundary shares length with the slab boundary
-    slab_boundary = slab_polygon.boundary
-    shared = region.boundary.intersection(slab_boundary)
-    shared_length = shared.length if not shared.is_empty else 0.0
+def classify_columns_for_floor(floor_plan):
+    """Classify all columns on a floor as center/edge/corner.
 
-    if shared_length <= BOUNDARY_TOUCH_TOLERANCE:
-        return 4  # center
+    Returns list of KLL values (4, 3, or 2) parallel to column_points.
+    Uses column point distance to slab boundary (not Voronoi regions).
+    """
+    column_points = floor_plan.get('column_points', [])
+    slab_polygon = floor_plan.get('slab_polygon')
 
-    # Edge column — check if it's at a corner (slab vertex inside the region)
-    buffered_region = region.buffer(CORNER_BUFFER_TOLERANCE)
-    for vertex in _extract_slab_vertices(slab_polygon):
-        if buffered_region.contains(vertex):
-            return 2  # corner
+    if not column_points or slab_polygon is None:
+        return [4] * len(column_points)
 
-    return 3  # edge
+    boundary = slab_polygon.boundary
+    true_corners = _extract_building_corners(slab_polygon)
+    threshold = _compute_edge_threshold(column_points, slab_polygon)
+
+    kll_values = []
+    for col_pt in column_points:
+        dist_to_edge = col_pt.distance(boundary)
+
+        if dist_to_edge >= threshold:
+            kll_values.append(4)  # center
+            continue
+
+        # Edge column — check if near a true corner
+        if true_corners:
+            min_corner_dist = min(col_pt.distance(c) for c in true_corners)
+            if min_corner_dist <= threshold:
+                kll_values.append(2)  # corner
+                continue
+
+        kll_values.append(3)  # edge
+
+    return kll_values
 
 
 def collect_master_matrix_data(floor_plans):
@@ -272,9 +327,9 @@ def collect_kll_matrix_data(floor_plans):
         floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
         column_points = floor_plan.get('column_points', [])
         column_labels = floor_plan.get('column_labels', [])
-        regions = floor_plan.get('regions')
-        slab_polygon = floor_plan.get('slab_polygon')
         point_metadata = floor_plan.get('point_metadata', [])
+
+        kll_values = classify_columns_for_floor(floor_plan)
 
         if floor_id not in floor_data:
             floor_data[floor_id] = {}
@@ -295,8 +350,7 @@ def collect_kll_matrix_data(floor_plans):
                 else:
                     label = f"UNLABELED_{col_idx}"
 
-                kll = classify_column_position(i, regions, slab_polygon) if regions and slab_polygon else 4
-                floor_data[floor_id][label] = kll
+                floor_data[floor_id][label] = kll_values[col_idx] if col_idx < len(kll_values) else 4
                 all_column_labels.add(label)
         else:
             for col_idx, point in enumerate(column_points):
@@ -304,8 +358,7 @@ def collect_kll_matrix_data(floor_plans):
                 if not isinstance(label, str):
                     label = str(label) if label is not None else f"UNLABELED_{col_idx}"
 
-                kll = classify_column_position(col_idx, regions, slab_polygon) if regions and slab_polygon else 4
-                floor_data[floor_id][label] = kll
+                floor_data[floor_id][label] = kll_values[col_idx] if col_idx < len(kll_values) else 4
                 all_column_labels.add(label)
 
     floor_data = expand_floor_map(floor_data)
