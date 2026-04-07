@@ -10,6 +10,7 @@ import re
 
 import openpyxl
 from openpyxl.styles import Alignment, Font
+from shapely.geometry import Point
 
 from fascade_utils import (
     compute_fascade_assignments,
@@ -19,6 +20,9 @@ from fascade_utils import (
 
 
 RANGE_FLOOR_RE = re.compile(r'^\s*([A-Za-z]*)(\d+)\s*[-–—]\s*([A-Za-z]*)(\d+)\s*$')
+
+BOUNDARY_TOUCH_TOLERANCE = 0.05  # ft — minimum shared boundary length to count as touching slab edge
+CORNER_BUFFER_TOLERANCE = 0.1    # ft — buffer around region for slab vertex containment check
 
 
 def alphanumeric_sort_key(label):
@@ -119,6 +123,51 @@ def expand_floor_scalar_map(source_values):
     return expanded
 
 
+def _extract_slab_vertices(slab_polygon):
+    """Extract all exterior ring vertices from a slab polygon (Polygon or MultiPolygon)."""
+    vertices = []
+    if slab_polygon.geom_type == 'Polygon':
+        vertices = [Point(coord) for coord in slab_polygon.exterior.coords[:-1]]
+    elif slab_polygon.geom_type == 'MultiPolygon':
+        for part in slab_polygon.geoms:
+            vertices.extend(Point(coord) for coord in part.exterior.coords[:-1])
+    return vertices
+
+
+def classify_column_position(col_idx, regions, slab_polygon):
+    """
+    Classify a column as center, edge, or corner based on its tributary region.
+
+    Returns KLL value: 4 (center), 3 (edge), or 2 (corner).
+    """
+    if not regions or col_idx >= len(regions):
+        return 4
+
+    region = regions[col_idx]
+    if region.is_empty or region.geom_type not in ('Polygon', 'MultiPolygon'):
+        return 4
+
+    # If MultiPolygon region, use the largest part
+    if region.geom_type == 'MultiPolygon':
+        region = max(region.geoms, key=lambda g: g.area)
+
+    # Check if the tributary region boundary shares length with the slab boundary
+    slab_boundary = slab_polygon.boundary
+    shared = region.boundary.intersection(slab_boundary)
+    shared_length = shared.length if not shared.is_empty else 0.0
+
+    if shared_length <= BOUNDARY_TOUCH_TOLERANCE:
+        return 4  # center
+
+    # Edge column — check if it's at a corner (slab vertex inside the region)
+    buffered_region = region.buffer(CORNER_BUFFER_TOLERANCE)
+    for vertex in _extract_slab_vertices(slab_polygon):
+        if buffered_region.contains(vertex):
+            return 2  # corner
+
+    return 3  # edge
+
+
 def collect_master_matrix_data(floor_plans):
     """
     Collect and organize data for master matrix format.
@@ -200,6 +249,76 @@ def collect_master_matrix_data(floor_plans):
             # Get tributary area if column exists on this floor, otherwise None
             matrix[floor_id][column_label] = floor_data[floor_id].get(column_label, None)
     
+    return {
+        'floor_numbers': sorted_floor_numbers,
+        'column_labels': sorted_column_labels,
+        'matrix': matrix
+    }
+
+
+def collect_kll_matrix_data(floor_plans):
+    """
+    Collect KLL (live load element factor) values for each column on each floor.
+
+    Classification: center=4, edge=3, corner=2 based on proximity to slab edge.
+
+    Returns dict with same structure as collect_master_matrix_data:
+        'floor_numbers', 'column_labels', 'matrix' (values are KLL integers).
+    """
+    all_column_labels = set()
+    floor_data = {}
+
+    for floor_plan in floor_plans:
+        floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        column_points = floor_plan.get('column_points', [])
+        column_labels = floor_plan.get('column_labels', [])
+        regions = floor_plan.get('regions')
+        slab_polygon = floor_plan.get('slab_polygon')
+        point_metadata = floor_plan.get('point_metadata', [])
+
+        if floor_id not in floor_data:
+            floor_data[floor_id] = {}
+
+        if point_metadata:
+            for i, metadata in enumerate(point_metadata):
+                if metadata.get('type') != 'column':
+                    continue
+
+                col_idx = metadata.get('column_index')
+                if col_idx is None or col_idx >= len(column_points):
+                    continue
+
+                if col_idx < len(column_labels):
+                    label = column_labels[col_idx]
+                    if not isinstance(label, str):
+                        label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+                else:
+                    label = f"UNLABELED_{col_idx}"
+
+                kll = classify_column_position(i, regions, slab_polygon) if regions and slab_polygon else 4
+                floor_data[floor_id][label] = kll
+                all_column_labels.add(label)
+        else:
+            for col_idx, point in enumerate(column_points):
+                label = column_labels[col_idx] if col_idx < len(column_labels) else f"UNLABELED_{col_idx}"
+                if not isinstance(label, str):
+                    label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+
+                kll = classify_column_position(col_idx, regions, slab_polygon) if regions and slab_polygon else 4
+                floor_data[floor_id][label] = kll
+                all_column_labels.add(label)
+
+    floor_data = expand_floor_map(floor_data)
+
+    sorted_column_labels = sorted(list(all_column_labels), key=alphanumeric_sort_key)
+    sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
+
+    matrix = {}
+    for floor_id in sorted_floor_numbers:
+        matrix[floor_id] = {}
+        for column_label in sorted_column_labels:
+            matrix[floor_id][column_label] = floor_data[floor_id].get(column_label, None)
+
     return {
         'floor_numbers': sorted_floor_numbers,
         'column_labels': sorted_column_labels,
@@ -439,9 +558,52 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
             else:
                 print(f"  {floor_id}: no perimeter detected (threshold {threshold_used:.1f} ft)")
         
+        # --- Master KLL Sheet ---
+        kll_data = collect_kll_matrix_data(floor_plans)
+        kll_labels = kll_data['column_labels']
+        kll_floor_numbers = kll_data['floor_numbers']
+        kll_matrix = kll_data['matrix']
+
+        kll_sheet = workbook.create_sheet(title="MASTER KLL")
+
+        kll_header = ["Floor"] + kll_labels
+        kll_sheet.append(kll_header)
+        for cell in kll_sheet[1]:
+            cell.font = header_font
+
+        for floor_id in kll_floor_numbers:
+            row_data = [floor_id]
+            for label in kll_labels:
+                kll_value = kll_matrix[floor_id].get(label)
+                row_data.append(kll_value if kll_value is not None else "")
+            kll_sheet.append(row_data)
+
+        if kll_floor_numbers:
+            for row in kll_sheet.iter_rows(
+                min_row=2, max_row=len(kll_floor_numbers) + 1,
+                min_col=1, max_col=1
+            ):
+                for cell in row:
+                    cell.font = Font(bold=True)
+
+        for row in kll_sheet.iter_rows(
+            min_row=2, max_row=len(kll_floor_numbers) + 1, min_col=2
+        ):
+            for cell in row:
+                if cell.value not in ("", None):
+                    cell.alignment = right_align
+
+        kll_sheet.column_dimensions['A'].width = 15
+        for col_idx, label in enumerate(kll_labels, start=2):
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            label_width = len(str(label))
+            kll_sheet.column_dimensions[col_letter].width = max(label_width + 2, 8)
+
+        kll_sheet.freeze_panes = 'B2'
+
         # Save Excel workbook
         workbook.save(output_filename)
-        
+
         # Log success message with filename
         print(f"\n✓ Excel export successful: {output_filename}")
         print(f"  Master matrix: {len(floor_numbers)} floors × {len(column_labels)} columns")
@@ -449,6 +611,8 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
             print(f"  Fascade length sheet: {len(fascade_floor_numbers)} floors × {len(fascade_labels)} boundary participants")
         else:
             print("  Fascade length sheet: no qualifying boundary participants (sheet contains floors only)")
+        if kll_labels:
+            print(f"  Master KLL sheet: {len(kll_floor_numbers)} floors × {len(kll_labels)} columns")
         
     except PermissionError:
         # Handle file permission errors
