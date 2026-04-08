@@ -136,6 +136,14 @@ function UploadPageInner() {
         >
           Load Demo
         </button>
+
+        <a
+          href="/template.dxf"
+          download="template.dxf"
+          className="block w-full py-2 px-4 border border-border-panel text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors text-center text-[12px]"
+        >
+          Download Template DXF
+        </a>
       </div>
     </div>
   );
