@@ -16,6 +16,7 @@ EDGE_TOLERANCE_FEET = 0.01
 
 DEFAULT_LAYER_CONFIG = {
     "boundary": ["BOUNDARY"],
+    "additional_load": [],
     "wall": ["WALL"],
     "beam": ["BEAM", "BEAMS", "TRANSFER", "TRANSFER BEAM", "GIRDER"],
     "support_point": ["POINTS", "COLUMNS", "COLUMN", "POINT"],

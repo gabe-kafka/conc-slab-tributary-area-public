@@ -6,6 +6,7 @@ import type { DraftData, LayerMapping } from "@/lib/types";
 
 const ROLES = [
   { key: "boundary", label: "Boundary", required: true },
+  { key: "additional_load", label: "Additional Load", required: false },
   { key: "support_point", label: "Columns / Points", required: true },
   { key: "wall", label: "Walls", required: false },
   { key: "beam", label: "Beams", required: false },
@@ -15,6 +16,7 @@ const ROLES = [
 
 const EMPTY_MAPPING: LayerMapping = {
   boundary: [],
+  additional_load: [],
   wall: [],
   beam: [],
   support_point: [],
@@ -32,6 +34,7 @@ function mappingFromDraft(draft: DraftData | null): LayerMapping {
   if (!draft) return EMPTY_MAPPING;
   return {
     boundary: draft.suggestions.boundary || [],
+    additional_load: draft.suggestions.additional_load || [],
     wall: draft.suggestions.wall || [],
     beam: draft.suggestions.beam || [],
     support_point: draft.suggestions.support_point || [],
@@ -39,6 +42,8 @@ function mappingFromDraft(draft: DraftData | null): LayerMapping {
     floor_label: draft.suggestions.floor_label || [],
   };
 }
+
+const SLAB_ROLES: ReadonlyArray<keyof LayerMapping> = ["boundary", "additional_load"];
 
 function entitySummary(counts: { [type: string]: number }): string {
   return Object.entries(counts)
@@ -76,7 +81,16 @@ export default function ReviewPage() {
         const next = current.includes(layer)
           ? current.filter((l) => l !== layer)
           : [...current, layer];
-        return { ...prev, [role]: next };
+        const updated: LayerMapping = { ...prev, [role]: next };
+
+        // Boundary and Additional Load both define slab area — a layer
+        // belongs to one or the other, never both.
+        if (SLAB_ROLES.includes(role) && !current.includes(layer)) {
+          const other = SLAB_ROLES.find((r) => r !== role)!;
+          updated[other] = prev[other].filter((l) => l !== layer);
+        }
+
+        return updated;
       });
     },
     [],

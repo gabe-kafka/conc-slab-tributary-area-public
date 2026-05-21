@@ -40,6 +40,7 @@ point_layers = set(layers["support_point"])
 column_label_layers = set(layers["column_label"])
 floor_label_layers = set(layers["floor_label"])
 boundary_layers = set(layers["boundary"])
+additional_load_layers = set(layers.get("additional_load", []))
 
 points = []
 column_footprints = []
@@ -105,12 +106,25 @@ for entity in msp:
             floor_numbers.append({"floor_number": text, "x": insert.x * factor, "y": insert.y * factor})
 
 loop_records = []
+# Primary slab layers — tagged uniformly as "BOUNDARY" so downstream
+# load-zone grouping collapses them into the primary live-load zone.
 for boundary_layer in sorted(boundary_layers):
     boundary_entities = [
         entity for entity in msp if entity_matches_layer(entity, {boundary_layer})
     ]
     for polygon in polygons_from_entities(boundary_entities, factor):
-        loop_records.append({"polygon": polygon, "load_layer": boundary_layer})
+        loop_records.append({"polygon": polygon, "load_layer": "BOUNDARY"})
+
+# Additional-load slab layers (terrace, balcony, …) — keep the DXF layer
+# name so each becomes a distinct secondary load zone.
+for additional_layer in sorted(additional_load_layers):
+    if additional_layer in boundary_layers:
+        continue
+    additional_entities = [
+        entity for entity in msp if entity_matches_layer(entity, {additional_layer})
+    ]
+    for polygon in polygons_from_entities(additional_entities, factor):
+        loop_records.append({"polygon": polygon, "load_layer": additional_layer})
 
 points_df = pd.DataFrame(
     points,
