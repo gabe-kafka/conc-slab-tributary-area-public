@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from shapely.geometry import mapping
 
+from export_column_loads import collect_column_discontinuities
+
 
 COORD_PRECISION = 4
 SIMPLIFY_TOLERANCE = 0.05  # feet
@@ -50,6 +52,7 @@ def _serialize_column(
     col_idx: int,
     floor_plan: Dict,
     facade_length_map: Dict[str, float],
+    ending_labels: set,
 ) -> Dict[str, Any]:
     label = floor_plan["column_labels"][col_idx]
     point = floor_plan["column_points"][col_idx]
@@ -71,6 +74,7 @@ def _serialize_column(
             col_idx,
         ),
         "facade_length_ft": round(facade_length_map.get(label, 0.0), 2),
+        "ends_here": label in ending_labels,
     }
 
 
@@ -152,6 +156,8 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
     min_x = min_y = float("inf")
     max_x = max_y = float("-inf")
 
+    discontinuities = collect_column_discontinuities(floor_plans)
+
     floors = []
     for fp in floor_plans:
         slab = fp.get("slab_polygon")
@@ -170,9 +176,11 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
         facade_length_map = fascade_data.get("length_map", {}) if fascade_data else {}
 
         # Serialize columns
+        floor_id = fp.get("floor_number", fp.get("boundary_id", f"FLOOR_{fp['index']}"))
+        ending_labels = discontinuities.get(floor_id, set())
         column_count = len(fp.get("column_points", []))
         columns = [
-            _serialize_column(i, fp, facade_length_map)
+            _serialize_column(i, fp, facade_length_map, ending_labels)
             for i in range(column_count)
         ]
 
@@ -181,7 +189,7 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
         beams = [_serialize_beam(b) for b in fp.get("beams", [])]
 
         floors.append({
-            "floor_id": fp.get("floor_number", fp.get("boundary_id", f"FLOOR_{fp['index']}")),
+            "floor_id": floor_id,
             "floor_index": fp["index"],
             "slab_boundary": _serialize_geometry(slab, simplify=False),
             "load_zones": _serialize_load_zones(fp),

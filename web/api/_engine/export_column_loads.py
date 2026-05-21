@@ -325,6 +325,53 @@ def collect_cross_section_data(floor_plans):
     }
 
 
+def collect_column_discontinuities(floor_plans):
+    """
+    Identify column terminations from physical cross-section presence.
+
+    A column "ends" at floor F when it has a cross section on F but not on
+    the floor immediately below. The bottom floor has no discontinuities —
+    those columns are assumed to continue to foundation.
+
+    Keyed by raw floor_plan floor_id (matches serialize_floor_plans), so
+    grouped identifiers like "4-8" are preserved rather than expanded.
+
+    Returns: { floor_id: set(column_label) }
+    """
+    floor_columns = {}  # floor_id -> set of labels with a footprint
+    floor_order = []    # preserves first-seen floor_ids for sorting
+
+    for floor_plan in floor_plans:
+        floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        column_labels = floor_plan.get('column_labels', [])
+        column_footprints = floor_plan.get('column_footprints', [])
+
+        if floor_id not in floor_columns:
+            floor_columns[floor_id] = set()
+            floor_order.append(floor_id)
+
+        for col_idx in range(len(column_labels)):
+            label = column_labels[col_idx]
+            if not isinstance(label, str):
+                label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+
+            footprint = column_footprints[col_idx] if col_idx < len(column_footprints) else None
+            if format_cross_section(footprint) is not None:
+                floor_columns[floor_id].add(label)
+
+    # Sort descending so the iteration goes roof → ground; grouped IDs
+    # like "4-8" use the lower numeric anchor via floor_sort_key.
+    sorted_floors = sorted(floor_order, key=floor_sort_key, reverse=True)
+
+    discontinuities = {floor_id: set() for floor_id in sorted_floors}
+    for upper, lower in zip(sorted_floors[:-1], sorted_floors[1:]):
+        for label in floor_columns[upper]:
+            if label not in floor_columns[lower]:
+                discontinuities[upper].add(label)
+
+    return discontinuities
+
+
 def collect_master_matrix_data(floor_plans):
     """
     Collect and organize data for master matrix format.

@@ -782,6 +782,35 @@ export default function TributaryCanvas({
                 );
               })}
 
+              {/* Transfer scaffolding: ring + dot at columns that end here
+                  (no cross section on the floor immediately below). */}
+              {floor.columns.map((col) => {
+                if (!col.ends_here) return null;
+                const [cx, cy] = transformPoint(
+                  col.point[0],
+                  col.point[1],
+                  transform,
+                  projection,
+                );
+                return (
+                  <Group key={`ends-${col.index}`} listening={false}>
+                    <Circle
+                      x={cx}
+                      y={cy}
+                      radius={(COLUMN_POINT_RADIUS + 4) * inv}
+                      stroke="#ef4444"
+                      strokeWidth={1.75 * inv}
+                    />
+                    <Circle
+                      x={cx}
+                      y={cy}
+                      radius={(COLUMN_POINT_RADIUS - 0.5) * inv}
+                      fill="#ef4444"
+                    />
+                  </Group>
+                );
+              })}
+
               {/* Column labels — anchored to column point, offset right */}
               {showLabels && viewMode !== "iso" &&
                 floor.columns.map((col) => {

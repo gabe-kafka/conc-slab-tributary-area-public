@@ -75,6 +75,7 @@ export interface ColumnData {
   area_sf_ceil: number;
   load_areas: LoadAreaData[];
   facade_length_ft: number;
+  ends_here: boolean;
 }
 
 export interface WallData {
