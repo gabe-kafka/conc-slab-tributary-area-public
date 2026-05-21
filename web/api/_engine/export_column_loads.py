@@ -617,8 +617,8 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         # Create single worksheet named "MASTER TRIBUTARY AREA"
         worksheet = workbook.create_sheet(title="MASTER TRIBUTARY AREA")
         
-        # Write header row: "Floor" in first column, then column labels
-        header_row = ["Floor"] + column_labels
+        # Write header row: "Slab #" in first column, then column labels
+        header_row = ["Slab #"] + column_labels
         worksheet.append(header_row)
         
         # Apply bold formatting to header row
@@ -673,7 +673,7 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         xs_matrix = xs_data['matrix']
 
         xs_sheet = workbook.create_sheet(title="MASTER CROSS SECTION")
-        xs_sheet.append(["Floor"] + xs_labels)
+        xs_sheet.append(["Slab #"] + xs_labels)
         for cell in xs_sheet[1]:
             cell.font = header_font
 
@@ -834,7 +834,7 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
 
         kll_sheet = workbook.create_sheet(title="MASTER KLL")
 
-        kll_header = ["Floor"] + kll_labels
+        kll_header = ["Slab #"] + kll_labels
         kll_sheet.append(kll_header)
         for cell in kll_sheet[1]:
             cell.font = header_font
