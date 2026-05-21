@@ -21,7 +21,21 @@ if ENGINE_DIR not in sys.path:
 from inspection_utils import inspect_dxf_bytes  # noqa: E402
 from blob_utils import blob_put  # noqa: E402
 
-DEMO_PATH = Path(__file__).parent / "_engine" / "demo" / "INPUT.dxf"
+DEMO_DIR = Path(__file__).parent / "_engine" / "demo"
+DEMO_FILES = {
+    "default": {
+        "path": DEMO_DIR / "INPUT.dxf",
+        "filename": "358 Flatbush - input.dxf",
+    },
+    "geom_clean_1": {
+        "path": DEMO_DIR / "geom_clean_1.dxf",
+        "filename": "1025 Atlantic - input.dxf",
+    },
+    "fulton_365": {
+        "path": DEMO_DIR / "365_fulton.dxf",
+        "filename": "365 Fulton - input.dxf",
+    },
+}
 
 
 class handler(BaseHTTPRequestHandler):
@@ -93,10 +107,17 @@ class handler(BaseHTTPRequestHandler):
         if not body.get("demo"):
             raise ValueError("JSON body must contain {\"demo\": true}")
 
-        if not DEMO_PATH.exists():
-            raise FileNotFoundError("Demo DXF is not available.")
+        demo_id = str(body.get("demo_id") or "default")
+        demo = DEMO_FILES.get(demo_id)
+        if demo is None:
+            choices = ", ".join(sorted(DEMO_FILES))
+            raise ValueError(f"Unknown demo_id '{demo_id}'. Available demos: {choices}")
 
-        return DEMO_PATH.read_bytes(), "DEMO_INPUT.dxf"
+        demo_path = demo["path"]
+        if not demo_path.exists():
+            raise FileNotFoundError(f"Demo DXF is not available: {demo_id}")
+
+        return demo_path.read_bytes(), demo["filename"]
 
     def _json_response(self, status: int, data: dict) -> None:
         body = json.dumps(data).encode("utf-8")

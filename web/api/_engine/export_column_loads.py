@@ -223,6 +223,108 @@ def classify_columns_for_floor(floor_plan):
     return kll_values
 
 
+def format_cross_section(footprint):
+    """
+    Format a column footprint polygon as a cross-section label.
+
+    Returns a string like "12x24" (rectangle), "24x24" (square), or "d24" (circle).
+    Dimensions are in inches (footprints are stored in feet). Returns None if the
+    footprint is missing or invalid.
+    """
+    if footprint is None or footprint.is_empty:
+        return None
+
+    area_ft2 = footprint.area
+    perimeter_ft = footprint.length
+    if area_ft2 <= 1e-9 or perimeter_ft <= 1e-9:
+        return None
+
+    def round_in(val_in: float) -> int:
+        # Half-away-from-zero rounding to the nearest inch (avoids banker's-rounding surprises at .5).
+        return int(math.floor(val_in + 0.5)) if val_in >= 0 else -int(math.floor(-val_in + 0.5))
+
+    # Circularity: 1.0 for a perfect circle, < 1.0 for polygons.
+    circularity = 4.0 * math.pi * area_ft2 / (perimeter_ft * perimeter_ft)
+    if circularity >= 0.92:
+        diameter_in = 2.0 * math.sqrt(area_ft2 / math.pi) * 12.0
+        return f"d{round_in(diameter_in)}"
+
+    min_rect = footprint.minimum_rotated_rectangle
+    coords = list(min_rect.exterior.coords)
+    if len(coords) < 5:
+        return None
+    side_a = math.hypot(coords[1][0] - coords[0][0], coords[1][1] - coords[0][1]) * 12.0
+    side_b = math.hypot(coords[2][0] - coords[1][0], coords[2][1] - coords[1][1]) * 12.0
+    w = round_in(min(side_a, side_b))
+    d = round_in(max(side_a, side_b))
+    return f"{w}x{d}"
+
+
+def collect_cross_section_data(floor_plans):
+    """
+    Collect column cross-section dimensions per floor in the same matrix shape
+    as collect_master_matrix_data. Cell values are formatted strings (e.g.
+    "12x24", "24x24", "d24") or None when the column is absent on a floor.
+    """
+    all_column_labels = set()
+    floor_data = {}
+
+    for floor_plan in floor_plans:
+        floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        column_points = floor_plan.get('column_points', [])
+        column_labels = floor_plan.get('column_labels', [])
+        column_footprints = floor_plan.get('column_footprints', [])
+        point_metadata = floor_plan.get('point_metadata', [])
+
+        if floor_id not in floor_data:
+            floor_data[floor_id] = {}
+
+        if point_metadata:
+            for metadata in point_metadata:
+                if metadata.get('type') != 'column':
+                    continue
+                col_idx = metadata.get('column_index')
+                if col_idx is None or col_idx >= len(column_points):
+                    continue
+
+                if col_idx < len(column_labels):
+                    label = column_labels[col_idx]
+                    if not isinstance(label, str):
+                        label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+                else:
+                    label = f"UNLABELED_{col_idx}"
+
+                footprint = column_footprints[col_idx] if col_idx < len(column_footprints) else None
+                floor_data[floor_id][label] = format_cross_section(footprint)
+                all_column_labels.add(label)
+        else:
+            for col_idx, _point in enumerate(column_points):
+                label = column_labels[col_idx] if col_idx < len(column_labels) else f"UNLABELED_{col_idx}"
+                if not isinstance(label, str):
+                    label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+
+                footprint = column_footprints[col_idx] if col_idx < len(column_footprints) else None
+                floor_data[floor_id][label] = format_cross_section(footprint)
+                all_column_labels.add(label)
+
+    floor_data = expand_floor_map(floor_data)
+
+    sorted_column_labels = sorted(list(all_column_labels), key=alphanumeric_sort_key)
+    sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
+
+    matrix = {}
+    for floor_id in sorted_floor_numbers:
+        matrix[floor_id] = {}
+        for column_label in sorted_column_labels:
+            matrix[floor_id][column_label] = floor_data[floor_id].get(column_label)
+
+    return {
+        'floor_numbers': sorted_floor_numbers,
+        'column_labels': sorted_column_labels,
+        'matrix': matrix,
+    }
+
+
 def collect_master_matrix_data(floor_plans):
     """
     Collect and organize data for master matrix format.
@@ -309,6 +411,45 @@ def collect_master_matrix_data(floor_plans):
         'column_labels': sorted_column_labels,
         'matrix': matrix
     }
+
+
+def collect_load_zone_area_rows(floor_plans):
+    """Return long-form tributary area rows split by boundary/load layer."""
+    rows = []
+
+    for floor_plan in floor_plans:
+        source_floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        expanded_floor_ids = expand_floor_identifier(source_floor_id)
+        column_labels = floor_plan.get('column_labels', [])
+        column_load_areas = floor_plan.get('column_load_areas', [])
+
+        for col_idx, load_areas in enumerate(column_load_areas):
+            label = column_labels[col_idx] if col_idx < len(column_labels) else f"UNLABELED_{col_idx}"
+            if not isinstance(label, str):
+                label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+
+            for item in load_areas:
+                area = float(item.get('area', 0.0) or 0.0)
+                if area <= 1e-6:
+                    continue
+
+                for floor_id in expanded_floor_ids:
+                    rows.append({
+                        'floor': floor_id,
+                        'load_zone': item.get('layer') or 'BOUNDARY',
+                        'column': label,
+                        'area': area,
+                    })
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            -floor_sort_key(row['floor'])[0],
+            str(row['floor']),
+            str(row['load_zone']),
+            alphanumeric_sort_key(row['column']),
+        ),
+    )
 
 
 def collect_kll_matrix_data(floor_plans):
@@ -524,7 +665,81 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         
         # Freeze top row and first column for scrolling
         worksheet.freeze_panes = 'B2'
-        
+
+        # --- Master Cross Section Sheet ---
+        xs_data = collect_cross_section_data(floor_plans)
+        xs_labels = xs_data['column_labels']
+        xs_floor_numbers = xs_data['floor_numbers']
+        xs_matrix = xs_data['matrix']
+
+        xs_sheet = workbook.create_sheet(title="MASTER CROSS SECTION")
+        xs_sheet.append(["Floor"] + xs_labels)
+        for cell in xs_sheet[1]:
+            cell.font = header_font
+
+        for floor_id in xs_floor_numbers:
+            row_data = [floor_id]
+            for label in xs_labels:
+                value = xs_matrix[floor_id].get(label)
+                row_data.append(value if value is not None else "")
+            xs_sheet.append(row_data)
+
+        if xs_floor_numbers:
+            for row in xs_sheet.iter_rows(
+                min_row=2, max_row=len(xs_floor_numbers) + 1,
+                min_col=1, max_col=1
+            ):
+                for cell in row:
+                    cell.font = Font(bold=True)
+
+        for row in xs_sheet.iter_rows(
+            min_row=2, max_row=len(xs_floor_numbers) + 1, min_col=2
+        ):
+            for cell in row:
+                if cell.value not in ("", None):
+                    cell.alignment = right_align
+
+        xs_sheet.column_dimensions['A'].width = 15
+        for col_idx, label in enumerate(xs_labels, start=2):
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            label_width = len(str(label))
+            xs_sheet.column_dimensions[col_letter].width = max(label_width + 2, 10)
+
+        xs_sheet.freeze_panes = 'B2'
+
+        # --- Load Zone Area Sheet ---
+        load_zone_rows = collect_load_zone_area_rows(floor_plans)
+        if load_zone_rows:
+            load_zone_sheet = workbook.create_sheet(title="LOAD ZONE AREAS")
+            load_zone_sheet.append(["Floor", "Load Zone", "Column", "Area (SF)", "Area Rounded (SF)"])
+            for cell in load_zone_sheet[1]:
+                cell.font = header_font
+
+            for row in load_zone_rows:
+                load_zone_sheet.append([
+                    row['floor'],
+                    row['load_zone'],
+                    row['column'],
+                    round(row['area'], 2),
+                    int(math.ceil(row['area'])),
+                ])
+
+            for row in load_zone_sheet.iter_rows(
+                min_row=2,
+                max_row=len(load_zone_rows) + 1,
+                min_col=4,
+            ):
+                for cell in row:
+                    if cell.value not in ("", None):
+                        cell.alignment = right_align
+
+            load_zone_sheet.column_dimensions['A'].width = 15
+            load_zone_sheet.column_dimensions['B'].width = 24
+            load_zone_sheet.column_dimensions['C'].width = 14
+            load_zone_sheet.column_dimensions['D'].width = 14
+            load_zone_sheet.column_dimensions['E'].width = 18
+            load_zone_sheet.freeze_panes = 'A2'
+
         # --- Fascade Length Sheet ---
         fascade_data = collect_fascade_length_data(floor_plans)
         fascade_labels = fascade_data['column_labels']
@@ -660,12 +875,20 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         # Log success message with filename
         print(f"\n✓ Excel export successful: {output_filename}")
         print(f"  Master matrix: {len(floor_numbers)} floors × {len(column_labels)} columns")
+        if xs_labels:
+            print(f"  Master cross section sheet: {len(xs_floor_numbers)} floors × {len(xs_labels)} columns")
         if fascade_labels:
             print(f"  Fascade length sheet: {len(fascade_floor_numbers)} floors × {len(fascade_labels)} boundary participants")
         else:
             print("  Fascade length sheet: no qualifying boundary participants (sheet contains floors only)")
         if kll_labels:
             print(f"  Master KLL sheet: {len(kll_floor_numbers)} floors × {len(kll_labels)} columns")
+        if load_zone_rows:
+            load_zone_names = sorted({str(row['load_zone']) for row in load_zone_rows})
+            print(
+                f"  Load zone area sheet: {len(load_zone_rows)} rows across "
+                f"{len(load_zone_names)} load zone(s)"
+            )
         
     except PermissionError:
         # Handle file permission errors

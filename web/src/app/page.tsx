@@ -2,8 +2,14 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useRef, useState } from "react";
-import { uploadDemo, uploadDxf } from "@/lib/api";
+import { type DemoId, uploadDemo, uploadDxf } from "@/lib/api";
 import type { DraftData } from "@/lib/types";
+
+const DEMO_OPTIONS: { id: DemoId; label: string; filename: string }[] = [
+  { id: "default", label: "Load 358 Demo 1", filename: "358 Flatbush - input.dxf" },
+  { id: "geom_clean_1", label: "Load 1025 Demo 2", filename: "1025 Atlantic - input.dxf" },
+  { id: "fulton_365", label: "Load 365 Demo 3", filename: "365 Fulton - input.dxf" },
+];
 
 function UploadPageInner() {
   const router = useRouter();
@@ -45,12 +51,12 @@ function UploadPageInner() {
     [handleDraft],
   );
 
-  const handleDemo = useCallback(async () => {
+  const handleDemo = useCallback(async (demo: (typeof DEMO_OPTIONS)[number]) => {
     setError(null);
-    setFilename("DEMO_INPUT.dxf");
+    setFilename(demo.filename);
     setLoading(true);
     try {
-      const draft = await uploadDemo();
+      const draft = await uploadDemo(demo.id);
       handleDraft(draft);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Demo failed.");
@@ -129,13 +135,18 @@ function UploadPageInner() {
           <div className="flex-1 border-t border-border-panel" />
         </div>
 
-        <button
-          onClick={handleDemo}
-          disabled={loading}
-          className="w-full py-2 px-4 border border-border-panel text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors disabled:opacity-40"
-        >
-          Load Demo
-        </button>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {DEMO_OPTIONS.map((demo) => (
+            <button
+              key={demo.id}
+              onClick={() => handleDemo(demo)}
+              disabled={loading}
+              className="w-full py-2 px-4 border border-border-panel text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors disabled:opacity-40 text-[12px]"
+            >
+              {demo.label}
+            </button>
+          ))}
+        </div>
 
         <a
           href="/template.dxf"

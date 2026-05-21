@@ -53,6 +53,8 @@ def _serialize_column(
 ) -> Dict[str, Any]:
     label = floor_plan["column_labels"][col_idx]
     point = floor_plan["column_points"][col_idx]
+    footprints = floor_plan.get("column_footprints", [])
+    footprint = footprints[col_idx] if col_idx < len(footprints) else None
     region = floor_plan["regions"][col_idx] if col_idx < len(floor_plan.get("regions", [])) else None
     area = floor_plan["areas"][col_idx] if col_idx < len(floor_plan.get("areas", [])) else 0.0
 
@@ -60,9 +62,14 @@ def _serialize_column(
         "index": col_idx,
         "label": label,
         "point": [round(point.x, COORD_PRECISION), round(point.y, COORD_PRECISION)],
+        "footprint": _serialize_geometry(footprint, simplify=False),
         "tributary_region": _serialize_geometry(region),
         "area_sf": round(area, 2),
         "area_sf_ceil": math.ceil(area) if area > 0 else 0,
+        "load_areas": _serialize_load_areas(
+            floor_plan.get("column_load_areas", []),
+            col_idx,
+        ),
         "facade_length_ft": round(facade_length_map.get(label, 0.0), 2),
     }
 
@@ -74,7 +81,55 @@ def _serialize_wall(wall_data: Dict) -> Dict[str, Any]:
         "tributary_region": _serialize_geometry(wall_data.get("merged_region")),
         "area_sf": round(wall_data.get("total_area", 0.0), 2),
         "area_sf_ceil": math.ceil(wall_data.get("total_area", 0.0)),
+        "load_areas": [
+            {
+                "layer": item.get("layer"),
+                "area_sf": round(item.get("area", 0.0), 2),
+                "area_sf_ceil": math.ceil(item.get("area", 0.0)),
+            }
+            for item in wall_data.get("load_areas", [])
+            if item.get("area", 0.0) > 1e-6
+        ],
     }
+
+
+def _serialize_beam(beam_data: Dict) -> Dict[str, Any]:
+    return {
+        "beam_index": beam_data["beam_index"],
+        "beam_line": _serialize_geometry(beam_data.get("beam_line"), simplify=False),
+        "source_layer": beam_data.get("source_layer", ""),
+    }
+
+
+def _serialize_load_areas(column_load_areas: List, col_idx: int) -> List[Dict[str, Any]]:
+    if col_idx >= len(column_load_areas):
+        return []
+
+    return [
+        {
+            "layer": item.get("layer"),
+            "area_sf": round(item.get("area", 0.0), 2),
+            "area_sf_ceil": math.ceil(item.get("area", 0.0)),
+        }
+        for item in column_load_areas[col_idx]
+        if item.get("area", 0.0) > 1e-6
+    ]
+
+
+def _serialize_load_zones(floor_plan: Dict) -> List[Dict[str, Any]]:
+    zones = []
+    for index, zone in enumerate(floor_plan.get("load_zones", [])):
+        polygon = zone.get("polygon")
+        if polygon is None or polygon.is_empty:
+            continue
+        zones.append({
+            "index": index,
+            "layer": zone.get("layer"),
+            "boundary": _serialize_geometry(polygon, simplify=False),
+            "area_sf": round(polygon.area, 2),
+            "area_sf_ceil": math.ceil(polygon.area),
+        })
+    return zones
 
 
 def _serialize_facade_segments(fascade_data: Optional[Dict]) -> List[Dict]:
@@ -123,13 +178,16 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
 
         # Serialize walls
         walls = [_serialize_wall(w) for w in fp.get("walls", [])]
+        beams = [_serialize_beam(b) for b in fp.get("beams", [])]
 
         floors.append({
             "floor_id": fp.get("floor_number", fp.get("boundary_id", f"FLOOR_{fp['index']}")),
             "floor_index": fp["index"],
             "slab_boundary": _serialize_geometry(slab, simplify=False),
+            "load_zones": _serialize_load_zones(fp),
             "columns": columns,
             "walls": walls,
+            "beams": beams,
             "facade_segments": _serialize_facade_segments(fascade_data),
             "facade_perimeter_ft": round(fascade_data.get("perimeter", 0.0), 2) if fascade_data else 0.0,
         })

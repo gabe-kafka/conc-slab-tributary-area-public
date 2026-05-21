@@ -17,6 +17,7 @@ EDGE_TOLERANCE_FEET = 0.01
 DEFAULT_LAYER_CONFIG = {
     "boundary": ["BOUNDARY"],
     "wall": ["WALL"],
+    "beam": ["BEAM", "BEAMS", "TRANSFER", "TRANSFER BEAM", "GIRDER"],
     "support_point": ["POINTS", "COLUMNS", "COLUMN", "POINT"],
     "column_label": ["COLUMN NUMBER"],
     "floor_label": ["FLOOR NUMBER"],

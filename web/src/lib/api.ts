@@ -1,6 +1,7 @@
 import type { DraftData, LayerMapping, ProcessResult } from "./types";
 
 const BASE = "";
+export type DemoId = "default" | "geom_clean_1" | "fulton_365";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
@@ -17,11 +18,11 @@ export async function uploadDxf(file: File): Promise<DraftData> {
   return request<DraftData>("/api/upload", { method: "POST", body: form });
 }
 
-export async function uploadDemo(): Promise<DraftData> {
+export async function uploadDemo(demoId: DemoId = "default"): Promise<DraftData> {
   return request<DraftData>("/api/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ demo: true }),
+    body: JSON.stringify({ demo: true, demo_id: demoId }),
   });
 }
 

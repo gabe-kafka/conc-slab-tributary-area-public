@@ -10,6 +10,7 @@ export interface DraftData {
   layers: string[];
   layer_counts: LayerCounts;
   suggestions: { [role: string]: string[] };
+  suggestion_source?: "ai" | "heuristic";
   inferred_floor_area_sf: number;
   require_unit_confirmation: boolean;
   blob_url: string;
@@ -18,6 +19,7 @@ export interface DraftData {
 export interface LayerMapping {
   boundary: string[];
   wall: string[];
+  beam: string[];
   support_point: string[];
   column_label: string[];
   floor_label: string[];
@@ -66,9 +68,11 @@ export interface ColumnData {
   index: number;
   label: string;
   point: [number, number];
+  footprint: GeoJsonPolygon | GeoJsonMultiPolygon | null;
   tributary_region: GeoJsonPolygon | GeoJsonMultiPolygon | null;
   area_sf: number;
   area_sf_ceil: number;
+  load_areas: LoadAreaData[];
   facade_length_ft: number;
 }
 
@@ -76,6 +80,27 @@ export interface WallData {
   wall_index: number;
   wall_line: GeoJsonLineString | null;
   tributary_region: GeoJsonPolygon | GeoJsonMultiPolygon | null;
+  area_sf: number;
+  area_sf_ceil: number;
+  load_areas: LoadAreaData[];
+}
+
+export interface BeamData {
+  beam_index: number;
+  beam_line: GeoJsonLineString | null;
+  source_layer: string;
+}
+
+export interface LoadAreaData {
+  layer: string;
+  area_sf: number;
+  area_sf_ceil: number;
+}
+
+export interface LoadZoneData {
+  index: number;
+  layer: string;
+  boundary: GeoJsonPolygon | GeoJsonMultiPolygon | null;
   area_sf: number;
   area_sf_ceil: number;
 }
@@ -91,8 +116,10 @@ export interface FloorData {
   floor_id: string;
   floor_index: number;
   slab_boundary: GeoJsonPolygon | GeoJsonMultiPolygon | null;
+  load_zones: LoadZoneData[];
   columns: ColumnData[];
   walls: WallData[];
+  beams: BeamData[];
   facade_segments: FacadeSegment[];
   facade_perimeter_ft: number;
 }

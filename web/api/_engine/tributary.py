@@ -19,7 +19,7 @@ from fascade_utils import (
 )
 from geometry_utils import (
     EDGE_TOLERANCE_FEET,
-    build_floor_surfaces,
+    entity_to_lines,
     line_intersects,
     load_job_config,
     nearest_label,
@@ -32,6 +32,226 @@ from tributary_solver import WALL_SUPPORT_SPACING_FEET, sample_wall_support_poin
 
 class NeedsReviewError(RuntimeError):
     pass
+
+
+AREA_TOLERANCE_SF = 1e-4
+DISPLAY_LINEWORK_TYPES = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE"}
+BOUNDARY_CONNECT_TOLERANCE_FEET = 0.05
+
+
+def collect_display_linework_entities(modelspace, allowed_layers):
+    """Collect visible linework from selected layers, including block contents."""
+    layer_set = set(allowed_layers)
+    if not layer_set:
+        return []
+
+    entities = []
+    for entity in modelspace:
+        if not hasattr(entity.dxf, "layer"):
+            continue
+
+        layer = entity.dxf.layer
+        kind = entity.dxftype()
+        if layer in layer_set:
+            if kind in DISPLAY_LINEWORK_TYPES:
+                entities.append((entity, layer))
+            elif kind == "INSERT":
+                try:
+                    for child in entity.virtual_entities():
+                        if child.dxftype() in DISPLAY_LINEWORK_TYPES:
+                            entities.append((child, layer))
+                except Exception as exc:
+                    print(
+                        f"Warning: Could not explode block '{entity.dxf.name}' "
+                        f"on selected layer: {exc}"
+                    )
+            continue
+
+        if kind == "INSERT":
+            try:
+                for child in entity.virtual_entities():
+                    child_layer = getattr(child.dxf, "layer", "")
+                    if child_layer in layer_set and child.dxftype() in DISPLAY_LINEWORK_TYPES:
+                        entities.append((child, child_layer))
+            except Exception:
+                pass
+
+    return entities
+
+
+def polygon_parts(geometry):
+    if geometry is None or geometry.is_empty:
+        return []
+    if geometry.geom_type == "Polygon":
+        return [geometry]
+    if geometry.geom_type == "MultiPolygon":
+        return [part for part in geometry.geoms if not part.is_empty]
+    return []
+
+
+def boundary_surface_groups(boundary_surfaces):
+    """Group load-zone polygons that touch or slightly overlap into one slab domain."""
+    groups = []
+
+    for record in boundary_surfaces:
+        polygon = record["polygon"].buffer(0)
+        if polygon.is_empty or polygon.area <= AREA_TOLERANCE_SF:
+            continue
+
+        touching_groups = []
+        for index, group in enumerate(groups):
+            if group["union"].distance(polygon) <= BOUNDARY_CONNECT_TOLERANCE_FEET:
+                touching_groups.append(index)
+
+        if not touching_groups:
+            groups.append(
+                {
+                    "surfaces": [record],
+                    "union": polygon,
+                }
+            )
+            continue
+
+        target_index = touching_groups[0]
+        target = groups[target_index]
+        target["surfaces"].append(record)
+        target["union"] = target["union"].union(polygon).buffer(0)
+
+        for merge_index in reversed(touching_groups[1:]):
+            merged = groups.pop(merge_index)
+            target["surfaces"].extend(merged["surfaces"])
+            target["union"] = target["union"].union(merged["union"]).buffer(0)
+
+    return groups
+
+
+def load_zones_from_boundary_surfaces(boundary_surfaces):
+    zones_by_layer = {}
+    for surface in boundary_surfaces:
+        layer = str(surface.get("load_layer") or "BOUNDARY")
+        polygon = surface.get("polygon")
+        if polygon is None or polygon.is_empty:
+            continue
+        zones_by_layer.setdefault(layer, []).append(polygon.buffer(0))
+
+    load_zones = []
+    for layer, polygons in zones_by_layer.items():
+        merged = unary_union(polygons).buffer(0)
+        if not merged.is_empty and merged.area > AREA_TOLERANCE_SF:
+            load_zones.append({"layer": layer, "polygon": merged})
+
+    return load_zones
+
+
+def load_zones_from_floor_plans(floor_plans_for_group):
+    zones_by_layer = {}
+
+    for floor_plan in floor_plans_for_group:
+        source_zones = floor_plan.get("load_zones") or [
+            {
+                "layer": floor_plan.get("load_layer", "BOUNDARY"),
+                "polygon": floor_plan["slab_polygon"],
+            }
+        ]
+        for zone in source_zones:
+            layer = str(zone.get("layer") or "BOUNDARY")
+            polygon = zone.get("polygon")
+            if polygon is None or polygon.is_empty:
+                continue
+            zones_by_layer.setdefault(layer, []).append(polygon.buffer(0))
+
+    load_zones = []
+    for layer, polygons in zones_by_layer.items():
+        merged = unary_union(polygons).buffer(0)
+        if not merged.is_empty and merged.area > AREA_TOLERANCE_SF:
+            load_zones.append({"layer": layer, "polygon": merged})
+
+    return load_zones
+
+
+def calculate_load_zone_areas(region, load_zones):
+    if region is None or region.is_empty or not load_zones:
+        return []
+
+    areas_by_layer = {}
+    for zone in load_zones:
+        zone_polygon = zone.get("polygon")
+        if zone_polygon is None or zone_polygon.is_empty:
+            continue
+
+        intersection = region.intersection(zone_polygon)
+        area = intersection.area if not intersection.is_empty else 0.0
+        if area > AREA_TOLERANCE_SF:
+            layer = str(zone.get("layer") or "BOUNDARY")
+            areas_by_layer[layer] = areas_by_layer.get(layer, 0.0) + area
+
+    return [
+        {"layer": layer, "area": area}
+        for layer, area in sorted(areas_by_layer.items(), key=lambda item: item[0])
+    ]
+
+
+def assign_load_zone_areas(floor_plan):
+    load_zones = floor_plan.get("load_zones", [])
+    floor_plan["column_load_areas"] = []
+
+    for region in floor_plan.get("regions", []):
+        floor_plan["column_load_areas"].append(
+            calculate_load_zone_areas(region, load_zones)
+        )
+
+    for wall_data in floor_plan.get("walls", []):
+        wall_data["load_areas"] = calculate_load_zone_areas(
+            wall_data.get("merged_region"),
+            load_zones,
+        )
+
+
+def load_column_footprints(path="dxf_column_footprints.csv"):
+    footprint_path = Path(path)
+    if not footprint_path.exists():
+        return {}
+
+    try:
+        footprints_df = pd.read_csv(footprint_path)
+    except Exception as exc:
+        print(f"WARNING: Could not load column footprints: {exc}")
+        return {}
+
+    required_columns = {"footprint_id", "ring_role", "vertex_index", "x", "y"}
+    if footprints_df.empty or not required_columns.issubset(footprints_df.columns):
+        return {}
+
+    footprints = {}
+    for footprint_id in footprints_df["footprint_id"].dropna().unique():
+        footprint_rows = footprints_df[footprints_df["footprint_id"] == footprint_id]
+        shell_rows = footprint_rows[footprint_rows["ring_role"] == "shell"].sort_values("vertex_index")
+        shell = [(row["x"], row["y"]) for _, row in shell_rows.iterrows()]
+        if len(shell) < 3:
+            continue
+        if shell[0] != shell[-1]:
+            shell.append(shell[0])
+
+        holes = []
+        hole_roles = [
+            role
+            for role in footprint_rows["ring_role"].dropna().unique()
+            if str(role).startswith("hole")
+        ]
+        for role in hole_roles:
+            hole_rows = footprint_rows[footprint_rows["ring_role"] == role].sort_values("vertex_index")
+            hole = [(row["x"], row["y"]) for _, row in hole_rows.iterrows()]
+            if len(hole) < 3:
+                continue
+            if hole[0] != hole[-1]:
+                hole.append(hole[0])
+            holes.append(hole)
+
+        polygon = Polygon(shell, holes).buffer(0)
+        if not polygon.is_empty and polygon.area > AREA_TOLERANCE_SF:
+            footprints[str(footprint_id)] = polygon
+
+    return footprints
 
 # --- Label-Point Association Function ---
 def associate_labels_with_points(
@@ -185,11 +405,85 @@ def associate_labels_with_points(
 
 # --- Column Deduplication Helper ---
 COLUMN_DUPLICATE_TOLERANCE = 0.25  # feet (~3 inches)
+POINT_FOOTPRINT_DUPLICATE_TOLERANCE = 1.0  # feet; handles mixed point + footprint drafting noise.
+FOOTPRINT_FRAGMENT_MERGE_TOLERANCE = 0.1
+FOOTPRINT_FRAGMENT_CENTROID_TOLERANCE = 3.0
+FOOTPRINT_FRAGMENT_MAX_AREA = 3.0
 
 
-def deduplicate_column_points(points, tolerance=COLUMN_DUPLICATE_TOLERANCE):
+def _footprint_overlap_ratio(a, b):
+    if a is None or b is None or a.is_empty or b.is_empty:
+        return 0.0
+    smaller_area = min(a.area, b.area)
+    if smaller_area <= AREA_TOLERANCE_SF:
+        return 0.0
+    intersection = a.intersection(b)
+    return (intersection.area if not intersection.is_empty else 0.0) / smaller_area
+
+
+def _column_records_match(record, entry):
+    distance = record["point"].distance(entry["point"])
+    record_footprint = record.get("footprint")
+    entry_footprint = entry.get("footprint")
+
+    if record_footprint is None and entry_footprint is None:
+        return distance <= COLUMN_DUPLICATE_TOLERANCE, distance, "point proximity"
+
+    if record_footprint is not None and entry_footprint is not None:
+        if _footprint_overlap_ratio(record_footprint, entry_footprint) >= 0.5:
+            return True, distance, "footprint overlap"
+        footprint_distance = record_footprint.distance(entry_footprint)
+        smaller_area = min(record_footprint.area, entry_footprint.area)
+        if (
+            footprint_distance <= FOOTPRINT_FRAGMENT_MERGE_TOLERANCE
+            and distance <= FOOTPRINT_FRAGMENT_CENTROID_TOLERANCE
+            and smaller_area <= FOOTPRINT_FRAGMENT_MAX_AREA
+        ):
+            return True, footprint_distance, "footprint fragment"
+        return distance <= COLUMN_DUPLICATE_TOLERANCE, distance, "footprint centroid proximity"
+
+    footprint = record_footprint or entry_footprint
+    point_record = entry if record_footprint is not None else record
+    distance_to_footprint = point_record["point"].distance(footprint)
+    if distance_to_footprint <= POINT_FOOTPRINT_DUPLICATE_TOLERANCE:
+        return True, distance_to_footprint, "point near footprint"
+
+    return False, distance, "separate supports"
+
+
+def _merge_column_record(entry, record):
+    entry["source_indices"].append(record["original_index"])
+    entry["source_types"].add(record["source_type"])
+
+    record_footprint = record.get("footprint")
+    entry_footprint = entry.get("footprint")
+
+    if entry_footprint is not None and record_footprint is not None:
+        merged = entry_footprint.union(record_footprint).buffer(0)
+        if not merged.is_empty:
+            entry["footprint"] = merged
+            centroid = merged.centroid
+            if not merged.buffer(1e-6).covers(centroid):
+                centroid = merged.representative_point()
+            entry["point"] = centroid
+        return
+
+    # Prefer the actual footprint as the canonical support location and display
+    # geometry when a point and closed column outline describe the same support.
+    if entry_footprint is None and record_footprint is not None:
+        entry["point"] = record["point"]
+        entry["footprint"] = record_footprint
+        entry["original_index"] = record["original_index"]
+
+
+def deduplicate_column_records(records):
     """
-    Remove column points that are effectively duplicates (within tolerance).
+    Remove column supports that are effectively duplicates.
+
+    Point-only supports use a tight tolerance. Mixed point + footprint supports
+    merge when the point falls inside or near the footprint, which prevents one
+    physical column from producing both a labeled footprint tributary and a
+    nearby unlabeled point tributary.
 
     Returns a tuple of (unique_columns, duplicate_records) where unique_columns is a list of
     dicts with keys:
@@ -201,25 +495,29 @@ def deduplicate_column_points(points, tolerance=COLUMN_DUPLICATE_TOLERANCE):
     unique_columns = []
     duplicate_records = []
     
-    for original_index, point in enumerate(points):
+    for record in records:
         matched_entry = None
         for entry in unique_columns:
-            distance = point.distance(entry['point'])
-            if distance <= tolerance:
+            is_duplicate, distance, reason = _column_records_match(record, entry)
+            if is_duplicate:
                 matched_entry = entry
-                matched_entry['source_indices'].append(original_index)
+                kept_index = entry["original_index"]
+                _merge_column_record(matched_entry, record)
                 duplicate_records.append({
-                    'kept_index': entry['original_index'],
-                    'removed_index': original_index,
-                    'distance': distance
+                    'kept_index': kept_index,
+                    'removed_index': record["original_index"],
+                    'distance': distance,
+                    'reason': reason,
                 })
                 break
         
         if matched_entry is None:
             unique_columns.append({
-                'point': point,
-                'original_index': original_index,
-                'source_indices': [original_index]
+                'point': record["point"],
+                'original_index': record["original_index"],
+                'source_indices': [record["original_index"]],
+                'source_types': {record["source_type"]},
+                'footprint': record.get("footprint"),
             })
     
     return unique_columns, duplicate_records
@@ -270,9 +568,11 @@ def normalize_column_label_text(label):
 # --- Load data ---
 points_df = pd.read_csv("dxf_points.csv")
 boundary_df = pd.read_csv("dxf_boundaries.csv")
+column_footprints_by_id = load_column_footprints()
 job_config = load_job_config()
 INCHES_TO_FEET = unit_factor(job_config["source_units"])
 wall_layers = set(job_config["layers"]["wall"])
+beam_layers = set(job_config["layers"].get("beam", []))
 
 # --- Load original DXF to preserve WALL layer entities ---
 INPUT_DXF = Path("INPUT.DXF")
@@ -356,8 +656,27 @@ for wall_idx, entity in enumerate(wall_entities):
 
 print(f"Extracted {len(wall_data_list)} WALL entities with support points")
 
+# --- Extract beam entities for display only ---
+beam_entities = collect_display_linework_entities(input_msp, beam_layers)
+beam_data_list = []
+for entity, source_layer in beam_entities:
+    try:
+        for beam_line in entity_to_lines(entity, INCHES_TO_FEET):
+            if beam_line and beam_line.length > 0:
+                beam_data_list.append(
+                    {
+                        "beam_index": len(beam_data_list),
+                        "beam_line": beam_line,
+                        "source_layer": source_layer,
+                    }
+                )
+    except Exception as exc:
+        print(f"Warning: Could not process BEAM entity on layer '{source_layer}': {exc}")
+
+print(f"Extracted {len(beam_data_list)} BEAM display segment(s)")
+
 # --- Reconstruct slab boundary and identify multiple floor plans ---
-loop_polygons = []
+boundary_surfaces = []
 if not boundary_df.empty and 'boundary_id' in boundary_df.columns:
     for boundary_id in boundary_df['boundary_id'].unique():
         ring_df = boundary_df[boundary_df['boundary_id'] == boundary_id].sort_values('vertex_index')
@@ -367,20 +686,38 @@ if not boundary_df.empty and 'boundary_id' in boundary_df.columns:
                 vertices.append(vertices[0])
             polygon = Polygon(vertices).buffer(0)
             if not polygon.is_empty and polygon.area > 1e-6:
-                loop_polygons.append(polygon)
+                load_layer = "BOUNDARY"
+                if "load_layer" in ring_df.columns:
+                    layer_values = ring_df["load_layer"].dropna().astype(str)
+                    if not layer_values.empty:
+                        load_layer = layer_values.iloc[0]
+                for part in polygon_parts(polygon):
+                    if part.area > AREA_TOLERANCE_SF:
+                        boundary_surfaces.append(
+                            {"polygon": part, "load_layer": load_layer}
+                        )
 
-floor_surfaces = build_floor_surfaces(loop_polygons)
-if not floor_surfaces:
+if not boundary_surfaces:
     raise ValueError("No valid floor plans could be created from boundary data")
 
-floor_plans = [
-    {
-        'index': idx,
-        'boundary_id': f'FLOOR_{idx}',
-        'slab_polygon': polygon.buffer(0),
-    }
-    for idx, polygon in enumerate(floor_surfaces)
-]
+surface_groups = boundary_surface_groups(boundary_surfaces)
+floor_plans = []
+for idx, group in enumerate(surface_groups):
+    slab_polygon = unary_union(
+        [surface["polygon"] for surface in group["surfaces"]]
+    ).buffer(0)
+    if slab_polygon.is_empty or slab_polygon.area <= AREA_TOLERANCE_SF:
+        continue
+
+    floor_plans.append(
+        {
+            'index': idx,
+            'boundary_id': f'FLOOR_{idx}',
+            'slab_polygon': slab_polygon,
+            'load_layer': "BOUNDARY",
+            'load_zones': load_zones_from_boundary_surfaces(group["surfaces"]),
+        }
+    )
 
 print(f"Identified {len(floor_plans)} floor plan(s)")
 
@@ -454,14 +791,17 @@ for floor_number, group in floor_groups.items():
         else:
             merged_polygon = unary_union([fp['slab_polygon'] for fp in kept])
             print(f"    Merged {len(kept)} boundaries into one ({merged_polygon.area:.0f} SF)")
+            load_zones = load_zones_from_floor_plans(kept)
             consolidated_floor_plan = {
                 'index': len(consolidated_floor_plans),
                 'boundary_id': floor_number,
                 'floor_number': floor_number,
                 'slab_polygon': merged_polygon,
+                'load_zones': load_zones,
                 'column_points': [],
                 'column_indices': [],
                 'walls': [],
+                'beams': [],
                 'column_labels': [],
                 'label_associations': {},
                 'unlabeled_points': []
@@ -477,25 +817,63 @@ for floor_plan in floor_plans:
     floor_idx = floor_plan['index']
     floor_number = floor_plan.get('floor_number')
     print(f"Floor {floor_idx} → Floor Number: {floor_number}")
+    load_zone_layers = sorted(
+        {
+            str(zone.get("layer"))
+            for zone in floor_plan.get("load_zones", [])
+            if zone.get("layer")
+        }
+    )
+    if load_zone_layers:
+        print(f"  Load zones: {', '.join(load_zone_layers)}")
+    slab_parts = polygon_parts(floor_plan.get("slab_polygon"))
+    if len(slab_parts) > 1:
+        part_summaries = [
+            f"{part.area:.0f} SF @ ({part.bounds[0]:.1f}, {part.bounds[1]:.1f})"
+            for part in sorted(slab_parts, key=lambda part: part.area, reverse=True)
+        ]
+        print(
+            f"  WARNING: disconnected slab domain has {len(slab_parts)} components: "
+            + "; ".join(part_summaries)
+        )
 
 # --- Assign column points to floor plans based on spatial containment ---
 # Load all column points first and deduplicate near-identical ones
-raw_column_points = [Point(x, y) for x, y in zip(points_df['x'], points_df['y'])]
-unique_column_entries, duplicate_column_records = deduplicate_column_points(raw_column_points)
+raw_column_footprints = {}
+if "footprint_id" in points_df.columns:
+    for row_index, footprint_id in enumerate(points_df["footprint_id"].fillna("").astype(str)):
+        if footprint_id and footprint_id in column_footprints_by_id:
+            raw_column_footprints[row_index] = column_footprints_by_id[footprint_id]
+
+raw_column_records = []
+for row_index, row in points_df.iterrows():
+    point = Point(row["x"], row["y"])
+    source_type = str(row.get("source_type", "POINT") or "POINT").upper()
+    raw_column_records.append(
+        {
+            "point": point,
+            "original_index": row_index,
+            "source_type": source_type,
+            "footprint": raw_column_footprints.get(row_index),
+        }
+    )
+
+unique_column_entries, duplicate_column_records = deduplicate_column_records(raw_column_records)
 all_column_points = [entry['point'] for entry in unique_column_entries]
 all_column_original_indices = [entry['original_index'] for entry in unique_column_entries]
+all_column_footprints = [entry.get('footprint') for entry in unique_column_entries]
 
 if duplicate_column_records:
     print("\n=== Column Deduplication ===")
     print(
         f"Detected {len(duplicate_column_records)} overlapping column instance(s) "
-        f"within {COLUMN_DUPLICATE_TOLERANCE:.2f} ft. "
-        f"Reduced {len(raw_column_points)} raw points to {len(all_column_points)} unique columns."
+        f"across point/footprint inputs. "
+        f"Reduced {len(raw_column_records)} raw supports to {len(all_column_points)} unique columns."
     )
     for record in duplicate_column_records[:5]:
         print(
             f"  - Original column {record['removed_index']} merged into {record['kept_index']} "
-            f"(distance {record['distance']:.2f} ft)"
+            f"({record['reason']}, distance {record['distance']:.2f} ft)"
         )
     if len(duplicate_column_records) > 5:
         print(f"    ... and {len(duplicate_column_records) - 5} more duplicates merged")
@@ -503,8 +881,10 @@ if duplicate_column_records:
 # Initialize column storage and wall data for each floor plan
 for floor_plan in floor_plans:
     floor_plan['column_points'] = []
+    floor_plan['column_footprints'] = []
     floor_plan['column_indices'] = []
     floor_plan['walls'] = []
+    floor_plan['beams'] = []
     floor_plan['column_labels'] = []  # NEW: Labels for each column point (parallel to column_points)
     floor_plan['label_associations'] = {}  # NEW: Mapping of point_index → label
     floor_plan['unlabeled_points'] = []  # NEW: Indices of points without labels
@@ -534,11 +914,42 @@ for floor_plan in floor_plans:
 if orphaned_walls:
     print(f"\nWARNING: {len(orphaned_walls)} wall(s) not contained in any floor plan: {orphaned_walls}")
 
+# --- Assign beam display linework to floor plans based on slab intersection ---
+orphaned_beams = []
+
+for beam_data in beam_data_list:
+    beam_line = beam_data["beam_line"]
+    matches = [
+        floor_plan
+        for floor_plan in floor_plans
+        if line_intersects(floor_plan["slab_polygon"], beam_line)
+    ]
+    if matches:
+        for floor_plan in matches:
+            floor_plan["beams"].append(beam_data)
+    else:
+        orphaned_beams.append(beam_data["beam_index"])
+
+print("\n=== Beam Display Assignment Summary ===")
+for floor_plan in floor_plans:
+    if floor_plan["beams"]:
+        print(
+            f"Floor {floor_plan['index']} ({floor_plan['boundary_id']}): "
+            f"{len(floor_plan['beams'])} beam display segment(s)"
+        )
+
+if orphaned_beams:
+    print(f"\nWARNING: {len(orphaned_beams)} beam segment(s) not contained in any floor plan: {orphaned_beams}")
+
 # Track orphaned columns (not contained in any floor plan)
 orphaned_columns = []
 
 # For each column point, check which floor plan polygon contains it
-for col_point, original_idx in zip(all_column_points, all_column_original_indices):
+for col_point, original_idx, footprint in zip(
+    all_column_points,
+    all_column_original_indices,
+    all_column_footprints,
+):
     matches = [floor_plan for floor_plan in floor_plans if point_is_inside(floor_plan['slab_polygon'], col_point)]
     if len(matches) > 1:
         raise NeedsReviewError(
@@ -546,6 +957,7 @@ for col_point, original_idx in zip(all_column_points, all_column_original_indice
         )
     if len(matches) == 1:
         matches[0]['column_points'].append(col_point)
+        matches[0]['column_footprints'].append(footprint)
         matches[0]['column_indices'].append(original_idx)
     else:
         orphaned_columns.append((original_idx, col_point))
@@ -815,6 +1227,8 @@ for floor_plan, solve_result in zip(floor_plans, ordered_results):
         wall_data['merged_region'] = wall_result['merged_region']
         wall_data['total_area'] = wall_result['total_area']
 
+    assign_load_zone_areas(floor_plan)
+
 # --- Set up DXF output infrastructure ---
 # Create new DXF document with R2010 format
 dxf_doc = ezdxf.new('R2010')
@@ -836,6 +1250,8 @@ for layer in input_dxf.layers:
         layer_name = layer.dxf.name.upper()
         if 'WALL' in layer_name:
             new_layer.color = colors.CYAN  # Cyan for walls
+        elif 'BEAM' in layer_name or 'GIRDER' in layer_name or 'TRANSFER' in layer_name:
+            new_layer.color = colors.YELLOW  # Yellow for beams/transfers
         elif 'BOUNDARY' in layer_name:
             new_layer.color = colors.BLUE  # Blue for boundaries
         elif 'COLUMN' in layer_name or 'POINT' in layer_name:
@@ -1376,6 +1792,7 @@ for floor_plan in floor_plans:
     num_regions = len(floor_plan['regions'])
     areas = floor_plan['areas']
     walls = floor_plan['walls']
+    beams = floor_plan.get('beams', [])
     
     # Count large tributary areas for columns only
     large_column_areas = [area for area in areas if area > threshold]
@@ -1386,6 +1803,7 @@ for floor_plan in floor_plans:
     print(f"\nFloor {floor_idx} ({boundary_id}):")
     print(f"  - Columns: {num_columns}")
     print(f"  - Walls: {len(walls)}")
+    print(f"  - Beam display segments: {len(beams)}")
     print(f"  - Tributary regions: {num_regions}")
     print(f"  - Large column tributary areas (>{threshold} SF): {len(large_column_areas)}")
     print(f"  - Large wall tributary areas (>{threshold} SF): {len(large_wall_areas)}")

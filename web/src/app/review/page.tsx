@@ -8,9 +8,37 @@ const ROLES = [
   { key: "boundary", label: "Boundary", required: true },
   { key: "support_point", label: "Columns / Points", required: true },
   { key: "wall", label: "Walls", required: false },
+  { key: "beam", label: "Beams", required: false },
   { key: "column_label", label: "Column Labels", required: false },
   { key: "floor_label", label: "Floor Labels", required: false },
 ] as const;
+
+const EMPTY_MAPPING: LayerMapping = {
+  boundary: [],
+  wall: [],
+  beam: [],
+  support_point: [],
+  column_label: [],
+  floor_label: [],
+};
+
+function readDraftFromSession(): DraftData | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem("draft");
+  return raw ? (JSON.parse(raw) as DraftData) : null;
+}
+
+function mappingFromDraft(draft: DraftData | null): LayerMapping {
+  if (!draft) return EMPTY_MAPPING;
+  return {
+    boundary: draft.suggestions.boundary || [],
+    wall: draft.suggestions.wall || [],
+    beam: draft.suggestions.beam || [],
+    support_point: draft.suggestions.support_point || [],
+    column_label: draft.suggestions.column_label || [],
+    floor_label: draft.suggestions.floor_label || [],
+  };
+}
 
 function entitySummary(counts: { [type: string]: number }): string {
   return Object.entries(counts)
@@ -21,36 +49,24 @@ function entitySummary(counts: { [type: string]: number }): string {
 export default function ReviewPage() {
   const router = useRouter();
   const [draft, setDraft] = useState<DraftData | null>(null);
-  const [mapping, setMapping] = useState<LayerMapping>({
-    boundary: [],
-    wall: [],
-    support_point: [],
-    column_label: [],
-    floor_label: [],
-  });
+  const [mapping, setMapping] = useState<LayerMapping>(EMPTY_MAPPING);
   const [units, setUnits] = useState("in");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const raw = sessionStorage.getItem("draft");
-    if (!raw) {
+    const nextDraft = readDraftFromSession();
+    if (!nextDraft) {
       router.replace("/");
       return;
     }
-    const d: DraftData = JSON.parse(raw);
-    setDraft(d);
-    // Pre-fill from suggestions
-    setMapping({
-      boundary: d.suggestions.boundary || [],
-      wall: d.suggestions.wall || [],
-      support_point: d.suggestions.support_point || [],
-      column_label: d.suggestions.column_label || [],
-      floor_label: d.suggestions.floor_label || [],
-    });
-    if (!d.require_unit_confirmation) {
-      setUnits("in");
-    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDraft(nextDraft);
+      setMapping(mappingFromDraft(nextDraft));
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
   }, [router]);
 
   const toggleLayer = useCallback(
@@ -73,6 +89,10 @@ export default function ReviewPage() {
       {
         label: "Area (est.)",
         value: `${Math.round(draft.inferred_floor_area_sf).toLocaleString()} SF`,
+      },
+      {
+        label: "Layer Pick",
+        value: draft.suggestion_source === "ai" ? "AI" : "Rules",
       },
       { label: "Layers", value: String(draft.layers.length) },
     ];

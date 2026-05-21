@@ -9,7 +9,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tributary Plate Slab",
+  title: "Concrete Slab Tributary Area",
   description: "Two-way slab tributary area calculator",
 };
 
@@ -27,7 +27,7 @@ export default function RootLayout({
               Tributary
             </span>
             <span className="text-text-muted">/</span>
-            <span>Plate Slab</span>
+            <span>Concrete Slab</span>
           </div>
           <StatusClock />
         </header>

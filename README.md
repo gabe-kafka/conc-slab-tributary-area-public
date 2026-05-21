@@ -1,4 +1,4 @@
-# Two-Way Slab Tributary Area
+# Concrete Slab Tributary Area
 
 Local V1 web app for:
 - DXF upload

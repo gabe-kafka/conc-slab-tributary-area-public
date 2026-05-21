@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: tributary-plate-slab
+    name: conc-slab-tributary-area-public
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -10,5 +10,5 @@ services:
       - key: TRIBUTARY_APP_DATA
         value: /tmp/tributary-data
       - key: CORS_ORIGIN
-        value: https://tributary-area.vercel.app
+        value: https://conc-slab-tributary-area-public.vercel.app
     plan: free
