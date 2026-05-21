@@ -413,6 +413,58 @@ def collect_master_matrix_data(floor_plans):
     }
 
 
+def collect_additional_load_matrix_data(floor_plans):
+    """
+    Per-column, per-floor SF coming from non-BOUNDARY load zones
+    (Terrace, Balcony, etc.) — i.e. the portion of each Voronoi region
+    that lies under a secondary load layer. Blank = column not on floor.
+    """
+    all_column_labels = set()
+    floor_data = {}
+
+    for floor_plan in floor_plans:
+        floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        column_labels = floor_plan.get('column_labels', [])
+        column_points = floor_plan.get('column_points', [])
+        column_load_areas = floor_plan.get('column_load_areas', [])
+
+        if floor_id not in floor_data:
+            floor_data[floor_id] = {}
+
+        for col_idx, _point in enumerate(column_points):
+            label = column_labels[col_idx] if col_idx < len(column_labels) else f"UNLABELED_{col_idx}"
+            if not isinstance(label, str):
+                label = str(label) if label is not None else f"UNLABELED_{col_idx}"
+
+            load_areas = column_load_areas[col_idx] if col_idx < len(column_load_areas) else []
+            secondary_area = 0.0
+            for item in load_areas:
+                layer = str(item.get('layer') or 'BOUNDARY').upper()
+                if layer == 'BOUNDARY':
+                    continue
+                secondary_area += float(item.get('area', 0.0) or 0.0)
+
+            floor_data[floor_id][label] = math.ceil(secondary_area)
+            all_column_labels.add(label)
+
+    floor_data = expand_floor_map(floor_data)
+
+    sorted_column_labels = sorted(list(all_column_labels), key=alphanumeric_sort_key)
+    sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
+
+    matrix = {}
+    for floor_id in sorted_floor_numbers:
+        matrix[floor_id] = {}
+        for column_label in sorted_column_labels:
+            matrix[floor_id][column_label] = floor_data[floor_id].get(column_label, None)
+
+    return {
+        'floor_numbers': sorted_floor_numbers,
+        'column_labels': sorted_column_labels,
+        'matrix': matrix,
+    }
+
+
 def collect_load_zone_area_rows(floor_plans):
     """Return long-form tributary area rows split by boundary/load layer."""
     rows = []
@@ -666,6 +718,47 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         # Freeze top row and first column for scrolling
         worksheet.freeze_panes = 'B2'
 
+        # --- Master Additional Load Area Sheet ---
+        add_data = collect_additional_load_matrix_data(floor_plans)
+        add_labels = add_data['column_labels']
+        add_floor_numbers = add_data['floor_numbers']
+        add_matrix = add_data['matrix']
+
+        add_sheet = workbook.create_sheet(title="MASTER ADDITIONAL LOAD AREA")
+        add_sheet.append(["Slab #"] + add_labels)
+        for cell in add_sheet[1]:
+            cell.font = header_font
+
+        for floor_id in add_floor_numbers:
+            row_data = [floor_id]
+            for label in add_labels:
+                value = add_matrix[floor_id].get(label)
+                row_data.append(value if value is not None else "")
+            add_sheet.append(row_data)
+
+        if add_floor_numbers:
+            for row in add_sheet.iter_rows(
+                min_row=2, max_row=len(add_floor_numbers) + 1,
+                min_col=1, max_col=1
+            ):
+                for cell in row:
+                    cell.font = Font(bold=True)
+
+        for row in add_sheet.iter_rows(
+            min_row=2, max_row=len(add_floor_numbers) + 1, min_col=2
+        ):
+            for cell in row:
+                if cell.value not in ("", None):
+                    cell.alignment = right_align
+
+        add_sheet.column_dimensions['A'].width = 15
+        for col_idx, label in enumerate(add_labels, start=2):
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            label_width = len(str(label))
+            add_sheet.column_dimensions[col_letter].width = max(label_width + 2, 8)
+
+        add_sheet.freeze_panes = 'B2'
+
         # --- Master Cross Section Sheet ---
         xs_data = collect_cross_section_data(floor_plans)
         xs_labels = xs_data['column_labels']
@@ -875,6 +968,8 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         # Log success message with filename
         print(f"\n✓ Excel export successful: {output_filename}")
         print(f"  Master matrix: {len(floor_numbers)} floors × {len(column_labels)} columns")
+        if add_labels:
+            print(f"  Master additional load area sheet: {len(add_floor_numbers)} floors × {len(add_labels)} columns")
         if xs_labels:
             print(f"  Master cross section sheet: {len(xs_floor_numbers)} floors × {len(xs_labels)} columns")
         if fascade_labels:
