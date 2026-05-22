@@ -254,6 +254,8 @@ export default function TributaryCanvas({
         usedUpper.add(bestUpper.wall.wall_index);
 
         const upperCoords = wallVertices(bestUpper.wall);
+        const matchedLower: [number, number][] = [];
+        const matchedUpper: [number, number][] = [];
         for (const lv of lowerCoords) {
           const lvAligned = alignedPoint(lv as [number, number], lowerOrigin);
           let nearest: [number, number] | null = null;
@@ -270,12 +272,16 @@ export default function TributaryCanvas({
             }
           }
           if (!nearest) continue;
+          matchedLower.push(lv as [number, number]);
+          matchedUpper.push(nearest);
+        }
+        if (matchedLower.length >= 2) {
           connections.push({
             kind: "wall",
             lowerInstance: lower,
             upperInstance: upper,
-            lowerPoint: lv as [number, number],
-            upperPoint: nearest,
+            lowerCoords: matchedLower,
+            upperCoords: matchedUpper,
           });
         }
       }
@@ -1159,30 +1165,62 @@ export default function TributaryCanvas({
                 isoOrbit,
                 alignmentOriginsByKey.get(floorSourceKey(conn.upperInstance.floor)),
               );
-              const [lx, ly] = transformPoint(
-                conn.lowerPoint[0],
-                conn.lowerPoint[1],
-                transform,
-                lowerProjection,
-              );
-              const [ux, uy] = transformPoint(
-                conn.upperPoint[0],
-                conn.upperPoint[1],
-                transform,
-                upperProjection,
-              );
               const inv = 1 / stageScale;
-              const isColumn = conn.kind === "column";
+
+              if (conn.kind === "column") {
+                const [lx, ly] = transformPoint(
+                  conn.lowerPoint[0],
+                  conn.lowerPoint[1],
+                  transform,
+                  lowerProjection,
+                );
+                const [ux, uy] = transformPoint(
+                  conn.upperPoint[0],
+                  conn.upperPoint[1],
+                  transform,
+                  upperProjection,
+                );
+                return (
+                  <Line
+                    key={`vconn-${idx}`}
+                    points={[lx, ly, ux, uy]}
+                    stroke={COLUMN_POINT_COLOR}
+                    strokeWidth={1.5 * inv}
+                    opacity={0.85}
+                    lineCap="round"
+                    listening={false}
+                  />
+                );
+              }
+
+              // Wall: build translucent quad faces between consecutive
+              // matched vertex pairs to give the wall visible thickness
+              // in iso. 20% fill opacity, faint outline.
+              const lowerScreen = conn.lowerCoords.map(
+                (p) => transformPoint(p[0], p[1], transform, lowerProjection),
+              );
+              const upperScreen = conn.upperCoords.map(
+                (p) => transformPoint(p[0], p[1], transform, upperProjection),
+              );
               return (
-                <Line
-                  key={`vconn-${idx}`}
-                  points={[lx, ly, ux, uy]}
-                  stroke={isColumn ? COLUMN_POINT_COLOR : "#ef4444"}
-                  strokeWidth={(isColumn ? 1.5 : 1.25) * inv}
-                  opacity={isColumn ? 0.85 : 0.7}
-                  lineCap="round"
-                  listening={false}
-                />
+                <Group key={`vconn-${idx}`} listening={false}>
+                  {lowerScreen.slice(0, -1).map((_, i) => {
+                    const l1 = lowerScreen[i];
+                    const l2 = lowerScreen[i + 1];
+                    const u2 = upperScreen[i + 1];
+                    const u1 = upperScreen[i];
+                    return (
+                      <Line
+                        key={`wface-${i}`}
+                        points={[l1[0], l1[1], l2[0], l2[1], u2[0], u2[1], u1[0], u1[1]]}
+                        closed
+                        fill="hsla(0, 70%, 45%, 0.2)"
+                        stroke="hsla(0, 70%, 45%, 0.5)"
+                        strokeWidth={0.5 * inv}
+                      />
+                    );
+                  })}
+                </Group>
               );
             })}
         </Layer>
@@ -1631,13 +1669,23 @@ function isUnlabeledColumn(label: string): boolean {
   return label.toUpperCase().includes("UNLABELED");
 }
 
-type VerticalConnection = {
-  kind: "column" | "wall";
-  lowerInstance: RenderFloorInstance;
-  upperInstance: RenderFloorInstance;
-  lowerPoint: [number, number];
-  upperPoint: [number, number];
-};
+type VerticalConnection =
+  | {
+      kind: "column";
+      lowerInstance: RenderFloorInstance;
+      upperInstance: RenderFloorInstance;
+      lowerPoint: [number, number];
+      upperPoint: [number, number];
+    }
+  | {
+      kind: "wall";
+      lowerInstance: RenderFloorInstance;
+      upperInstance: RenderFloorInstance;
+      // Matched vertex sequences (same length) — consecutive pairs form
+      // a quad face of the wall when rendered in iso.
+      lowerCoords: [number, number][];
+      upperCoords: [number, number][];
+    };
 
 const WALL_MATCH_TOLERANCE_FT = 3;
 
