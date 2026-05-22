@@ -227,13 +227,49 @@ def classify_columns_for_floor(floor_plan):
     return kll_values
 
 
+CIRCLE_CIRCULARITY_THRESHOLD = 0.96   # raised from 0.92 to exclude octagons (≈0.948)
+OCTAGON_CIRCULARITY_LOWER = 0.92      # 8-vertex polygons above this read as octagons
+NON_CONVEX_AREA_RATIO = 0.85          # poly.area / hull.area below → L/T/+ shape
+SHAPE_TAG_BY_VERTEX = {3: "tri", 5: "pent", 6: "hex"}
+
+
+def _round_in(val_in: float) -> int:
+    """Half-away-from-zero rounding to nearest inch."""
+    return int(math.floor(val_in + 0.5)) if val_in >= 0 else -int(math.floor(-val_in + 0.5))
+
+
+def _mrr_sides_in(footprint) -> tuple[int, int] | None:
+    """Return (w, d) in inches from the minimum-rotated-rectangle, w ≤ d."""
+    min_rect = footprint.minimum_rotated_rectangle
+    coords = list(min_rect.exterior.coords)
+    if len(coords) < 5:
+        return None
+    side_a = math.hypot(coords[1][0] - coords[0][0], coords[1][1] - coords[0][1]) * 12.0
+    side_b = math.hypot(coords[2][0] - coords[1][0], coords[2][1] - coords[1][1]) * 12.0
+    return _round_in(min(side_a, side_b)), _round_in(max(side_a, side_b))
+
+
+def _bbox_sides_in(footprint) -> tuple[int, int]:
+    """Return (w, d) of the axis-aligned bounding box in inches, w ≤ d."""
+    min_x, min_y, max_x, max_y = footprint.bounds
+    w = _round_in((max_x - min_x) * 12.0)
+    h = _round_in((max_y - min_y) * 12.0)
+    return min(w, h), max(w, h)
+
+
 def format_cross_section(footprint):
     """
     Format a column footprint polygon as a cross-section label.
 
-    Returns a string like "12x24" (rectangle), "24x24" (square), or "d24" (circle).
-    Dimensions are in inches (footprints are stored in feet). Returns None if the
-    footprint is missing or invalid.
+    Outputs (all dims in inches):
+      - "12x24"      rectangle / rotated rectangle / diamond (MRR sides)
+      - "d24"        circle (high circularity, dia from area)
+      - "oct24"      octagon (8 vertices, circularity 0.92–0.96)
+      - "tri18x24"   triangle (3-vertex polygon, bbox dims)
+      - "pent18x24"  pentagon (5-vertex)
+      - "hex18x24"   hexagon (6-vertex)
+      - "L24x26"     non-convex (L / T / + / U)
+      - None if footprint missing or degenerate
     """
     if footprint is None or footprint.is_empty:
         return None
@@ -243,24 +279,48 @@ def format_cross_section(footprint):
     if area_ft2 <= 1e-9 or perimeter_ft <= 1e-9:
         return None
 
-    def round_in(val_in: float) -> int:
-        # Half-away-from-zero rounding to the nearest inch (avoids banker's-rounding surprises at .5).
-        return int(math.floor(val_in + 0.5)) if val_in >= 0 else -int(math.floor(-val_in + 0.5))
+    coords = list(footprint.exterior.coords)
+    if coords and coords[0] == coords[-1]:
+        coords = coords[:-1]
+    n = len(coords)
 
-    # Circularity: 1.0 for a perfect circle, < 1.0 for polygons.
     circularity = 4.0 * math.pi * area_ft2 / (perimeter_ft * perimeter_ft)
-    if circularity >= 0.92:
-        diameter_in = 2.0 * math.sqrt(area_ft2 / math.pi) * 12.0
-        return f"d{round_in(diameter_in)}"
 
-    min_rect = footprint.minimum_rotated_rectangle
-    coords = list(min_rect.exterior.coords)
-    if len(coords) < 5:
+    # True circle (raised threshold so octagons fall through).
+    if circularity >= CIRCLE_CIRCULARITY_THRESHOLD:
+        diameter_in = 2.0 * math.sqrt(area_ft2 / math.pi) * 12.0
+        return f"d{_round_in(diameter_in)}"
+
+    # Octagon: 8 vertices in the threshold band.
+    if n == 8 and circularity >= OCTAGON_CIRCULARITY_LOWER:
+        diameter_in = 2.0 * math.sqrt(area_ft2 / math.pi) * 12.0
+        return f"oct{_round_in(diameter_in)}"
+
+    # Low-vertex non-rectangular polygons (triangle, pentagon, hexagon).
+    # Use MRR so the dim reflects the column's actual oriented extent,
+    # not the drawing-orientation bbox.
+    if n in SHAPE_TAG_BY_VERTEX:
+        mrr = _mrr_sides_in(footprint)
+        if mrr is not None:
+            w, d = mrr
+            return f"{SHAPE_TAG_BY_VERTEX[n]}{w}x{d}"
+
+    # Non-convex (L / T / + / U): convex-hull area materially larger than polygon.
+    try:
+        hull_area = footprint.convex_hull.area
+        if hull_area > 1e-9 and area_ft2 / hull_area < NON_CONVEX_AREA_RATIO:
+            mrr = _mrr_sides_in(footprint)
+            if mrr is not None:
+                w, d = mrr
+                return f"L{w}x{d}"
+    except Exception:
+        pass
+
+    # Default: rectangle / rotated rectangle / diamond — MRR sides.
+    mrr = _mrr_sides_in(footprint)
+    if mrr is None:
         return None
-    side_a = math.hypot(coords[1][0] - coords[0][0], coords[1][1] - coords[0][1]) * 12.0
-    side_b = math.hypot(coords[2][0] - coords[1][0], coords[2][1] - coords[1][1]) * 12.0
-    w = round_in(min(side_a, side_b))
-    d = round_in(max(side_a, side_b))
+    w, d = mrr
     return f"{w}x{d}"
 
 
