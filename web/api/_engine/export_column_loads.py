@@ -351,12 +351,50 @@ def _floor_alignment_origin(floor_plan):
     return None
 
 
-def collect_column_discontinuities(floor_plans):
+def compute_floor_datums(floor_plans):
     """
-    Polygon-overlap discontinuity check, with floors aligned via an
-    AI-picked elevator/stair-core inside corner (falls back to the
-    length-weighted wall centroid when AI is unavailable or returns
-    nothing for a floor).
+    Per-floor alignment datum used for cross-floor geometric comparison.
+
+    Tries AI selection first (elevator/stair-core inside corner — most
+    stable feature across floors). Falls back to wall-centroid, then
+    slab-centroid. Returns {floor_id: {"point": (x, y), "source": str}}.
+    """
+    from datum_utils import select_alignment_datums
+
+    ai_datums = select_alignment_datums(floor_plans)
+
+    result = {}
+    for floor_plan in floor_plans:
+        floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        if floor_id in result:
+            continue
+
+        ai_xy = ai_datums.get(str(floor_id))
+        if ai_xy is not None:
+            result[floor_id] = {"point": (ai_xy[0], ai_xy[1]), "source": "ai"}
+            continue
+
+        wall_origin = _floor_alignment_origin(floor_plan)
+        if wall_origin is None:
+            result[floor_id] = {"point": None, "source": "none"}
+            continue
+
+        # Determine which fallback fired by re-running the cheap check.
+        has_walls = any(
+            w.get("wall_line") is not None and not w["wall_line"].is_empty
+            for w in (floor_plan.get("walls") or [])
+        )
+        source = "wall_centroid" if has_walls else "slab_centroid"
+        result[floor_id] = {"point": (wall_origin.x, wall_origin.y), "source": source}
+
+    return result
+
+
+def collect_column_discontinuities(floor_plans, floor_datums=None):
+    """
+    Polygon-overlap discontinuity check, with floors aligned via the
+    per-floor datums from compute_floor_datums (or computed inline when
+    not provided).
 
     A column on floor F is continuous iff its (translated) footprint
     intersects any column footprint on the floor immediately below.
@@ -368,9 +406,9 @@ def collect_column_discontinuities(floor_plans):
     """
     from shapely.affinity import translate
     from shapely.geometry import Point
-    from datum_utils import select_alignment_datums
 
-    ai_datums = select_alignment_datums(floor_plans)
+    if floor_datums is None:
+        floor_datums = compute_floor_datums(floor_plans)
 
     floor_data = {}  # floor_id -> {origin, columns: [(label, point, footprint)]}
     floor_order = []
@@ -382,11 +420,8 @@ def collect_column_discontinuities(floor_plans):
         column_footprints = floor_plan.get('column_footprints', [])
 
         if floor_id not in floor_data:
-            ai_xy = ai_datums.get(str(floor_id))
-            if ai_xy is not None:
-                origin = Point(ai_xy[0], ai_xy[1])
-            else:
-                origin = _floor_alignment_origin(floor_plan)
+            datum = floor_datums.get(floor_id, {}).get("point")
+            origin = Point(datum[0], datum[1]) if datum is not None else None
             floor_data[floor_id] = {
                 "origin": origin,
                 "columns": [],

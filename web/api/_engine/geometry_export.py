@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from shapely.geometry import mapping
 
-from export_column_loads import collect_column_discontinuities
+from export_column_loads import collect_column_discontinuities, compute_floor_datums
 
 
 COORD_PRECISION = 4
@@ -158,7 +158,8 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
     min_x = min_y = float("inf")
     max_x = max_y = float("-inf")
 
-    discontinuities = collect_column_discontinuities(floor_plans)
+    floor_datums = compute_floor_datums(floor_plans)
+    discontinuities = collect_column_discontinuities(floor_plans, floor_datums=floor_datums)
 
     floors = []
     for fp in floor_plans:
@@ -190,6 +191,8 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
         walls = [_serialize_wall(w) for w in fp.get("walls", [])]
         beams = [_serialize_beam(b) for b in fp.get("beams", [])]
 
+        datum_info = floor_datums.get(floor_id, {})
+        datum_point = datum_info.get("point")
         floors.append({
             "floor_id": floor_id,
             "floor_index": fp["index"],
@@ -200,6 +203,11 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
             "beams": beams,
             "facade_segments": _serialize_facade_segments(fascade_data),
             "facade_perimeter_ft": round(fascade_data.get("perimeter", 0.0), 2) if fascade_data else 0.0,
+            "alignment_datum": (
+                [round(datum_point[0], COORD_PRECISION), round(datum_point[1], COORD_PRECISION)]
+                if datum_point is not None else None
+            ),
+            "alignment_datum_source": datum_info.get("source", "none"),
         })
 
     return {

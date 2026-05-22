@@ -782,6 +782,62 @@ export default function TributaryCanvas({
                 );
               })}
 
+              {/* Alignment datum overlay — cyan crosshair + source chip
+                  so the user can visually verify (and later override) the
+                  point being used to align this floor against the others. */}
+              {floor.alignment_datum && (() => {
+                const [dx, dy] = transformPoint(
+                  floor.alignment_datum[0],
+                  floor.alignment_datum[1],
+                  transform,
+                  projection,
+                );
+                const armLen = 14 * inv;
+                const ringRadius = 6 * inv;
+                const dotRadius = 1.75 * inv;
+                const source = floor.alignment_datum_source;
+                const sourceLabel =
+                  source === "ai"
+                    ? "AI"
+                    : source === "wall_centroid"
+                      ? "WALL"
+                      : source === "slab_centroid"
+                        ? "SLAB"
+                        : "—";
+                return (
+                  <Group key={`datum-${floor.floor_index}`} listening={false}>
+                    <Line
+                      points={[dx - armLen, dy, dx + armLen, dy]}
+                      stroke="#22d3ee"
+                      strokeWidth={1.25 * inv}
+                    />
+                    <Line
+                      points={[dx, dy - armLen, dx, dy + armLen]}
+                      stroke="#22d3ee"
+                      strokeWidth={1.25 * inv}
+                    />
+                    <Circle
+                      x={dx}
+                      y={dy}
+                      radius={ringRadius}
+                      stroke="#22d3ee"
+                      strokeWidth={1.25 * inv}
+                    />
+                    <Circle x={dx} y={dy} radius={dotRadius} fill="#22d3ee" />
+                    {viewMode !== "iso" && (
+                      <Text
+                        x={dx + 10 * inv}
+                        y={dy - 12 * inv}
+                        text={`DATUM·${sourceLabel}`}
+                        fontSize={8 * inv}
+                        fontFamily="JetBrains Mono, monospace"
+                        fill="#22d3ee"
+                      />
+                    )}
+                  </Group>
+                );
+              })()}
+
               {/* Transfer scaffolding: ring + dot at columns that end here
                   (no cross section on the floor immediately below). */}
               {floor.columns.map((col) => {

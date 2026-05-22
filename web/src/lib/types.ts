@@ -114,6 +114,8 @@ export interface FacadeSegment {
   polyline: number[][];
 }
 
+export type AlignmentDatumSource = "ai" | "wall_centroid" | "slab_centroid" | "none";
+
 export interface FloorData {
   floor_id: string;
   floor_index: number;
@@ -124,6 +126,8 @@ export interface FloorData {
   beams: BeamData[];
   facade_segments: FacadeSegment[];
   facade_perimeter_ft: number;
+  alignment_datum: [number, number] | null;
+  alignment_datum_source: AlignmentDatumSource;
 }
 
 export interface GeometryBounds {
