@@ -64,6 +64,10 @@ interface TributaryCanvasProps {
   showTributaries: boolean;
   highlightUnlabeled: boolean;
   showSlabDebug: boolean;
+  showSlabs: boolean;
+  showWalls: boolean;
+  showColumns: boolean;
+  showBeams: boolean;
   viewMode: ViewMode;
   datumPoints: DatumPoints;
   datumEditFloorId: string | null;
@@ -95,6 +99,10 @@ export default function TributaryCanvas({
   showTributaries,
   highlightUnlabeled,
   showSlabDebug,
+  showSlabs,
+  showWalls,
+  showColumns,
+  showBeams,
   viewMode,
   datumPoints,
   datumEditFloorId,
@@ -550,7 +558,7 @@ export default function TributaryCanvas({
             return (
               <Group key={instance.instanceId}>
               {/* Slab boundary */}
-              {floor.slab_boundary &&
+              {showSlabs && floor.slab_boundary &&
                 geometryToRings(floor.slab_boundary).map((ring, i) => (
                   <Line
                     key={`boundary-${i}`}
@@ -695,7 +703,7 @@ export default function TributaryCanvas({
               })}
 
               {/* Column supports: closed footprints when available, point markers otherwise. */}
-              {floor.columns.map((col) => {
+              {showColumns && floor.columns.map((col) => {
                 const isSelected =
                   selectedColumn?.floorId === instance.sourceFloorId &&
                   selectedColumn?.displayFloorId === instance.displayFloorId &&
@@ -1023,7 +1031,7 @@ export default function TributaryCanvas({
                   })}
 
               {/* Beam transfer linework: display only; not part of tributary solve yet. */}
-              {floor.beams?.map((beam) => {
+              {showBeams && floor.beams?.map((beam) => {
                 if (!beam.beam_line) return null;
                 return (
                   <Line
@@ -1044,7 +1052,7 @@ export default function TributaryCanvas({
               })}
 
               {/* Wall linework */}
-              {floor.walls.map((wall) => {
+              {showWalls && floor.walls.map((wall) => {
                 if (!wall.wall_line) return null;
                 const coords = wall.wall_line.coordinates;
                 const isClosed = coords.length >= 4;
@@ -1155,7 +1163,9 @@ export default function TributaryCanvas({
           })}
 
           {viewMode === "iso" &&
-            verticalConnections.map((conn, idx) => {
+            verticalConnections
+              .filter((conn) => (conn.kind === "column" ? showColumns : showWalls))
+              .map((conn, idx) => {
               const lowerProjection = projectionForFloor(
                 "iso",
                 floorBoundsByKey.get(floorSourceKey(conn.lowerInstance.floor)) ?? bounds,

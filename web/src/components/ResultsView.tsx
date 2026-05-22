@@ -47,6 +47,10 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
   const [showTributaries, setShowTributaries] = useState(true);
   const [highlightUnlabeled, setHighlightUnlabeled] = useState(false);
   const [showSlabDebug, setShowSlabDebug] = useState(false);
+  const [showSlabs, setShowSlabs] = useState(true);
+  const [showWalls, setShowWalls] = useState(true);
+  const [showColumns, setShowColumns] = useState(true);
+  const [showBeams, setShowBeams] = useState(true);
   const [viewMode, setViewMode] = useState<ViewMode>("plan");
   const [datumPoints, setDatumPoints] = useState<DatumPoints>({});
   const [datumEditFloorId, setDatumEditFloorId] = useState<string | null>(null);
@@ -301,6 +305,25 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
                 : ""}
             </span>
           </label>
+          {[
+            { label: "Slabs", checked: showSlabs, set: setShowSlabs },
+            { label: "Walls", checked: showWalls, set: setShowWalls },
+            { label: "Columns", checked: showColumns, set: setShowColumns },
+            { label: "Beams", checked: showBeams, set: setShowBeams },
+          ].map((toggle) => (
+            <label
+              key={toggle.label}
+              className="h-6 px-2 flex items-center gap-1.5 border border-border-panel text-[10px] uppercase tracking-wider text-text-secondary hover:text-text-primary cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={toggle.checked}
+                onChange={(event) => toggle.set(event.target.checked)}
+                className="accent-accent"
+              />
+              <span>{toggle.label}</span>
+            </label>
+          ))}
           <div className="h-6 flex border border-border-panel overflow-hidden">
             {[
               { value: "plan", label: "2D" },
@@ -418,6 +441,10 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
           showTributaries={showTributaries}
           highlightUnlabeled={highlightUnlabeled}
           showSlabDebug={showSlabDebug}
+          showSlabs={showSlabs}
+          showWalls={showWalls}
+          showColumns={showColumns}
+          showBeams={showBeams}
           viewMode={viewMode}
           datumPoints={datumPoints}
           datumEditFloorId={datumEditFloorId}
