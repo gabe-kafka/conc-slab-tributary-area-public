@@ -960,13 +960,26 @@ for col_point, original_idx, footprint in zip(
         matches[0]['column_footprints'].append(footprint)
         matches[0]['column_indices'].append(original_idx)
     else:
-        orphaned_columns.append((original_idx, col_point))
+        orphaned_columns.append((original_idx, col_point, footprint))
 
-# Print warning for orphaned columns
-if orphaned_columns:
-    print(f"\nWARNING: {len(orphaned_columns)} column(s) not contained in any floor plan:")
-    for idx, col_point in orphaned_columns:
-        print(f"  Column {idx} at ({col_point.x:.2f}, {col_point.y:.2f})")
+# Rescue orphans by assigning them to the nearest floor's slab. A column
+# can sit outside the slab boundary on a given floor (perimeter stepback,
+# cantilever) but still belong to that floor structurally — dropping them
+# breaks continuity tracking and loses cross-section data.
+if orphaned_columns and floor_plans:
+    print(f"\nRescued {len(orphaned_columns)} orphan column(s) — outside any slab, "
+          f"assigning to nearest floor:")
+    for idx, col_point, footprint in orphaned_columns:
+        nearest = min(
+            floor_plans,
+            key=lambda fp: fp['slab_polygon'].distance(col_point),
+        )
+        nearest['column_points'].append(col_point)
+        nearest['column_footprints'].append(footprint)
+        nearest['column_indices'].append(idx)
+        gap_ft = nearest['slab_polygon'].distance(col_point)
+        print(f"  Column {idx} at ({col_point.x:.2f}, {col_point.y:.2f}) "
+              f"-> floor {nearest['index']} ({nearest['boundary_id']}, gap {gap_ft:.1f} ft)")
 
 # Print summary of column assignments
 print("\n=== Column Assignment Summary ===")
