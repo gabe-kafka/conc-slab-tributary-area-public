@@ -167,6 +167,9 @@ export default function TributaryCanvas({
         instanceId: `plan:${floor.floor_index}:${floor.floor_id}`,
         stackIndex: index,
         floorElevation: 0,
+        // Plan view doesn't expand grouped floor ids — show markers as
+        // normal.
+        isBottomOfGroup: true,
       }));
   }, [floors, viewMode]);
 
