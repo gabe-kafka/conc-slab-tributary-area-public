@@ -472,9 +472,14 @@ def collect_column_discontinuities(floor_plans, floor_datums=None):
         dy = lower_d["origin"].y - upper_d["origin"].y
         lower_footprints = [fp for _, _, fp in lower_d["columns"]]
 
+        # 1-foot proximity tolerance: a column is continuous if its
+        # (datum-translated) footprint comes within 1 ft of any lower
+        # footprint. Catches near-misses from drafting drift, shifted
+        # column sizes, or slight datum offsets.
+        proximity_tol_ft = 1.0
         for label, point, upper_fp in upper_d["columns"]:
             translated = translate(upper_fp, xoff=dx, yoff=dy)
-            if not any(translated.intersects(lp) for lp in lower_footprints):
+            if not any(translated.distance(lp) <= proximity_tol_ft for lp in lower_footprints):
                 discontinuities[upper].add((label, round(point.x, 2), round(point.y, 2)))
 
     return discontinuities
