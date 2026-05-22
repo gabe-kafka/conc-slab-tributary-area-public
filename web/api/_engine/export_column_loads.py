@@ -355,23 +355,27 @@ def compute_floor_datums(floor_plans):
     """
     Per-floor alignment datum used for cross-floor geometric comparison.
 
-    Tries AI selection first (elevator/stair-core inside corner — most
-    stable feature across floors). Falls back to wall-centroid, then
-    slab-centroid. Returns {floor_id: {"point": (x, y), "source": str}}.
+    Convention: floor plans are drawn stacked in DXF model space at a
+    fixed vertical offset (3000 inches per floor for the demo DXF). The
+    slab bbox min corner naturally encodes whatever stacking offset the
+    user used — translations between adjacent floors come out to exactly
+    the stacking offset without hardcoding it.
+
+    AI selection (datum_utils.select_alignment_datums) and wall/slab
+    centroid remain available as fallbacks for non-stacked layouts.
+
+    Returns {floor_id: {"point": (x, y), "source": str}}.
     """
-    from datum_utils import select_alignment_datums
-
-    ai_datums = select_alignment_datums(floor_plans)
-
     result = {}
     for floor_plan in floor_plans:
         floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
         if floor_id in result:
             continue
 
-        ai_xy = ai_datums.get(str(floor_id))
-        if ai_xy is not None:
-            result[floor_id] = {"point": (ai_xy[0], ai_xy[1]), "source": "ai"}
+        slab = floor_plan.get('slab_polygon')
+        if slab is not None and not slab.is_empty:
+            min_x, min_y, _, _ = slab.bounds
+            result[floor_id] = {"point": (min_x, min_y), "source": "stacked"}
             continue
 
         wall_origin = _floor_alignment_origin(floor_plan)
@@ -379,7 +383,6 @@ def compute_floor_datums(floor_plans):
             result[floor_id] = {"point": None, "source": "none"}
             continue
 
-        # Determine which fallback fired by re-running the cheap check.
         has_walls = any(
             w.get("wall_line") is not None and not w["wall_line"].is_empty
             for w in (floor_plan.get("walls") or [])
@@ -410,7 +413,7 @@ def collect_column_discontinuities(floor_plans, floor_datums=None):
     if floor_datums is None:
         floor_datums = compute_floor_datums(floor_plans)
 
-    floor_data = {}  # floor_id -> {origin, columns: [(label, point, footprint)]}
+    floor_data = {}  # floor_id -> {origin, source, columns: [(label, point, footprint)]}
     floor_order = []
 
     for floor_plan in floor_plans:
@@ -420,10 +423,12 @@ def collect_column_discontinuities(floor_plans, floor_datums=None):
         column_footprints = floor_plan.get('column_footprints', [])
 
         if floor_id not in floor_data:
-            datum = floor_datums.get(floor_id, {}).get("point")
+            datum_info = floor_datums.get(floor_id, {})
+            datum = datum_info.get("point")
             origin = Point(datum[0], datum[1]) if datum is not None else None
             floor_data[floor_id] = {
                 "origin": origin,
+                "source": datum_info.get("source", "none"),
                 "columns": [],
             }
             floor_order.append(floor_id)
@@ -452,7 +457,13 @@ def collect_column_discontinuities(floor_plans, floor_datums=None):
                     discontinuities[upper].add((label, round(point.x, 2), round(point.y, 2)))
             continue
 
-        dx = lower_d["origin"].x - upper_d["origin"].x
+        # Stacked convention: x is forced to zero — the user's DXFs draw
+        # each floor directly above the previous in y only. For any other
+        # datum source (AI, wall/slab centroid), use both axes.
+        if upper_d["source"] == "stacked" and lower_d["source"] == "stacked":
+            dx = 0.0
+        else:
+            dx = lower_d["origin"].x - upper_d["origin"].x
         dy = lower_d["origin"].y - upper_d["origin"].y
         lower_footprints = [fp for _, _, fp in lower_d["columns"]]
 

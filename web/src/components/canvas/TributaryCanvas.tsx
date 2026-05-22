@@ -797,13 +797,15 @@ export default function TributaryCanvas({
                 const dotRadius = 1.75 * inv;
                 const source = floor.alignment_datum_source;
                 const sourceLabel =
-                  source === "ai"
-                    ? "AI"
-                    : source === "wall_centroid"
-                      ? "WALL"
-                      : source === "slab_centroid"
-                        ? "SLAB"
-                        : "—";
+                  source === "stacked"
+                    ? "STACK"
+                    : source === "ai"
+                      ? "AI"
+                      : source === "wall_centroid"
+                        ? "WALL"
+                        : source === "slab_centroid"
+                          ? "SLAB"
+                          : "—";
                 return (
                   <Group key={`datum-${floor.floor_index}`} listening={false}>
                     <Line

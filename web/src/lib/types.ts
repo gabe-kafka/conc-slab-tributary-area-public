@@ -114,7 +114,12 @@ export interface FacadeSegment {
   polyline: number[][];
 }
 
-export type AlignmentDatumSource = "ai" | "wall_centroid" | "slab_centroid" | "none";
+export type AlignmentDatumSource =
+  | "stacked"
+  | "ai"
+  | "wall_centroid"
+  | "slab_centroid"
+  | "none";
 
 export interface FloorData {
   floor_id: string;
