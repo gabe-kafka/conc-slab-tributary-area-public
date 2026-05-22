@@ -215,23 +215,39 @@ export default function TributaryCanvas({
       const lower = visibleStack[i];
       const upper = visibleStack[i + 1];
 
-      const lowerLabels = buildColumnLabelMap(lower.floor);
-      const upperLabels = buildColumnLabelMap(upper.floor);
+      const lowerOrigin = alignmentOriginsByKey.get(floorSourceKey(lower.floor));
+      const upperOrigin = alignmentOriginsByKey.get(floorSourceKey(upper.floor));
 
-      for (const [label, lowerPoint] of lowerLabels) {
-        const upperPoint = upperLabels.get(label);
-        if (!upperPoint) continue;
+      // Match columns by datum-translated centroid proximity rather than
+      // by label — labels can be missing, duplicated, or differ across
+      // floors. Two columns are the same physical column if their points
+      // come within COLUMN_MATCH_TOLERANCE_FT after alignment.
+      const COLUMN_MATCH_TOLERANCE_FT = 2.0;
+      const usedLowerColumns = new Set<number>();
+      for (const upperCol of upper.floor.columns) {
+        const upperAligned = alignedPoint(upperCol.point, upperOrigin);
+        let best: { col: typeof upperCol; dist: number } | null = null;
+        for (const lowerCol of lower.floor.columns) {
+          if (usedLowerColumns.has(lowerCol.index)) continue;
+          const lowerAligned = alignedPoint(lowerCol.point, lowerOrigin);
+          const d = Math.hypot(
+            upperAligned[0] - lowerAligned[0],
+            upperAligned[1] - lowerAligned[1],
+          );
+          if (d > COLUMN_MATCH_TOLERANCE_FT) continue;
+          if (!best || d < best.dist) best = { col: lowerCol, dist: d };
+        }
+        if (!best) continue;
+        usedLowerColumns.add(best.col.index);
         connections.push({
           kind: "column",
           lowerInstance: lower,
           upperInstance: upper,
-          lowerPoint,
-          upperPoint,
+          lowerPoint: best.col.point,
+          upperPoint: upperCol.point,
         });
       }
 
-      const lowerOrigin = alignmentOriginsByKey.get(floorSourceKey(lower.floor));
-      const upperOrigin = alignmentOriginsByKey.get(floorSourceKey(upper.floor));
       const usedUpper = new Set<number>();
 
       for (const lowerWall of lower.floor.walls) {
