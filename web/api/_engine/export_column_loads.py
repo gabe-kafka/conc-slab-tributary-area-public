@@ -353,8 +353,10 @@ def _floor_alignment_origin(floor_plan):
 
 def collect_column_discontinuities(floor_plans):
     """
-    Polygon-overlap discontinuity check, with floors aligned via the
-    length-weighted centroid of each floor's wall geometry.
+    Polygon-overlap discontinuity check, with floors aligned via an
+    AI-picked elevator/stair-core inside corner (falls back to the
+    length-weighted wall centroid when AI is unavailable or returns
+    nothing for a floor).
 
     A column on floor F is continuous iff its (translated) footprint
     intersects any column footprint on the floor immediately below.
@@ -365,6 +367,10 @@ def collect_column_discontinuities(floor_plans):
     Returns: { floor_id: set((label, point_x, point_y)) }
     """
     from shapely.affinity import translate
+    from shapely.geometry import Point
+    from datum_utils import select_alignment_datums
+
+    ai_datums = select_alignment_datums(floor_plans)
 
     floor_data = {}  # floor_id -> {origin, columns: [(label, point, footprint)]}
     floor_order = []
@@ -376,8 +382,13 @@ def collect_column_discontinuities(floor_plans):
         column_footprints = floor_plan.get('column_footprints', [])
 
         if floor_id not in floor_data:
+            ai_xy = ai_datums.get(str(floor_id))
+            if ai_xy is not None:
+                origin = Point(ai_xy[0], ai_xy[1])
+            else:
+                origin = _floor_alignment_origin(floor_plan)
             floor_data[floor_id] = {
-                "origin": _floor_alignment_origin(floor_plan),
+                "origin": origin,
                 "columns": [],
             }
             floor_order.append(floor_id)
