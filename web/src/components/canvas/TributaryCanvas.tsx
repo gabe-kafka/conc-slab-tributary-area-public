@@ -218,34 +218,48 @@ export default function TributaryCanvas({
       const lowerOrigin = alignmentOriginsByKey.get(floorSourceKey(lower.floor));
       const upperOrigin = alignmentOriginsByKey.get(floorSourceKey(upper.floor));
 
-      // Match columns by datum-translated centroid proximity rather than
-      // by label — labels can be missing, duplicated, or differ across
-      // floors. Two columns are the same physical column if their points
-      // come within COLUMN_MATCH_TOLERANCE_FT after alignment.
-      const COLUMN_MATCH_TOLERANCE_FT = 2.0;
-      const usedLowerColumns = new Set<number>();
-      for (const upperCol of upper.floor.columns) {
-        const upperAligned = alignedPoint(upperCol.point, upperOrigin);
-        let best: { col: typeof upperCol; dist: number } | null = null;
-        for (const lowerCol of lower.floor.columns) {
-          if (usedLowerColumns.has(lowerCol.index)) continue;
-          const lowerAligned = alignedPoint(lowerCol.point, lowerOrigin);
-          const d = Math.hypot(
-            upperAligned[0] - lowerAligned[0],
-            upperAligned[1] - lowerAligned[1],
-          );
-          if (d > COLUMN_MATCH_TOLERANCE_FT) continue;
-          if (!best || d < best.dist) best = { col: lowerCol, dist: d };
+      if (lower.floor === upper.floor) {
+        // Grouped-floor expansion (same FloorData on both instances) —
+        // every column is identical, just at a different elevation.
+        // Skip the matching loop and emit one connection per column.
+        for (const col of upper.floor.columns) {
+          connections.push({
+            kind: "column",
+            lowerInstance: lower,
+            upperInstance: upper,
+            lowerPoint: col.point,
+            upperPoint: col.point,
+          });
         }
-        if (!best) continue;
-        usedLowerColumns.add(best.col.index);
-        connections.push({
-          kind: "column",
-          lowerInstance: lower,
-          upperInstance: upper,
-          lowerPoint: best.col.point,
-          upperPoint: upperCol.point,
-        });
+      } else {
+        // Different FloorData — match by datum-translated centroid
+        // proximity. Wider tolerance to absorb small alignment drift
+        // between floor drawings; labels are ignored entirely.
+        const COLUMN_MATCH_TOLERANCE_FT = 4.0;
+        const usedLowerColumns = new Set<number>();
+        for (const upperCol of upper.floor.columns) {
+          const upperAligned = alignedPoint(upperCol.point, upperOrigin);
+          let best: { col: typeof upperCol; dist: number } | null = null;
+          for (const lowerCol of lower.floor.columns) {
+            if (usedLowerColumns.has(lowerCol.index)) continue;
+            const lowerAligned = alignedPoint(lowerCol.point, lowerOrigin);
+            const d = Math.hypot(
+              upperAligned[0] - lowerAligned[0],
+              upperAligned[1] - lowerAligned[1],
+            );
+            if (d > COLUMN_MATCH_TOLERANCE_FT) continue;
+            if (!best || d < best.dist) best = { col: lowerCol, dist: d };
+          }
+          if (!best) continue;
+          usedLowerColumns.add(best.col.index);
+          connections.push({
+            kind: "column",
+            lowerInstance: lower,
+            upperInstance: upper,
+            lowerPoint: best.col.point,
+            upperPoint: upperCol.point,
+          });
+        }
       }
 
       const usedUpper = new Set<number>();
