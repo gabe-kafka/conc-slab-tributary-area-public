@@ -283,6 +283,27 @@ footprints_df = pd.DataFrame(
     ],
 )
 
+# Suppress drafting errors that sit on top of a valid column footprint.
+# This handles the common case where an old X-mark / centerline drawing
+# wasn't deleted when the column was redrawn as a closed polygon.
+COLUMN_OVERLAP_TOL_FT = 1.0
+suppressed_drafting_errors = 0
+if drafting_errors and column_footprints:
+    footprint_centroids = [(rec["polygon"].centroid.x, rec["polygon"].centroid.y) for rec in column_footprints]
+    filtered_errors = []
+    for err in drafting_errors:
+        ex, ey = err["x"], err["y"]
+        suppressed = False
+        for fx, fy in footprint_centroids:
+            if (ex - fx) ** 2 + (ey - fy) ** 2 <= COLUMN_OVERLAP_TOL_FT * COLUMN_OVERLAP_TOL_FT:
+                suppressed = True
+                break
+        if suppressed:
+            suppressed_drafting_errors += 1
+        else:
+            filtered_errors.append(err)
+    drafting_errors = filtered_errors
+
 drafting_errors_df = pd.DataFrame(
     drafting_errors,
     columns=["x", "y", "min_x", "min_y", "max_x", "max_y", "kind", "source_layer", "reason"],
@@ -301,5 +322,5 @@ print("Skipped tiny column footprint candidates:", skipped_column_footprints)
 print("Boundary loops:", boundaries_df["boundary_id"].nunique() if not boundaries_df.empty else 0)
 print("Column Labels:", len(column_labels_df))
 print("Floor Numbers:", len(floor_numbers_df))
-print("Drafting error candidates:", len(drafting_errors_df))
+print("Drafting error candidates:", len(drafting_errors_df), f"(suppressed {suppressed_drafting_errors} that overlap valid footprints)")
 print("Detected layers:", ", ".join(all_layers(doc)))
