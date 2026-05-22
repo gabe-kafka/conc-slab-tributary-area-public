@@ -327,51 +327,56 @@ def collect_cross_section_data(floor_plans):
 
 def collect_column_discontinuities(floor_plans):
     """
-    Identify column terminations from label presence across floors.
+    Identify column terminations from footprint overlap across floors.
 
-    A column "ends" at floor F when its label appears (with a cross
-    section) on F but not on the floor immediately below. The bottom
-    floor has no discontinuities — those columns continue to foundation.
+    A column on floor F is continuous iff its footprint polygon intersects
+    any column footprint on the floor immediately below. If it overlaps
+    nothing on F-1 it's flagged as ending (red dot). Labels are ignored —
+    only the (x,y) geometry matters.
 
-    Pure label match is correct even when floor drawings sit in different
-    (x,y) regions of the DXF: orphan rescue upstream (tributary.py) puts
-    out-of-slab columns onto their nearest floor's label list, so a
-    continuous-but-outside-slab column still shows the same label on
-    both upper and lower floors and is not flagged.
+    Assumes floor drawings share a coordinate system (stacked floor
+    plates). If each floor sits in its own offset region of the DXF,
+    nothing overlaps and every column will flag — let me know if your
+    DXF is laid out that way.
 
-    Keyed by raw floor_plan floor_id (matches serialize_floor_plans), so
-    grouped identifiers like "4-8" are preserved rather than expanded.
+    Bottom floor has no discontinuities — those columns are assumed to
+    continue to foundation.
 
-    Returns: { floor_id: set(column_label) }
+    Returns: { floor_id: set((label, point_x, point_y)) }
+    The point tuple disambiguates columns that share a label on the same
+    floor; serialize_floor_plans matches on both label and rounded point.
     """
-    floor_columns = {}  # floor_id -> set of labels with a cross section
+    floor_columns = {}  # floor_id -> list of (label, point, footprint)
     floor_order = []
 
     for floor_plan in floor_plans:
         floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
         column_labels = floor_plan.get('column_labels', [])
+        column_points = floor_plan.get('column_points', [])
         column_footprints = floor_plan.get('column_footprints', [])
 
         if floor_id not in floor_columns:
-            floor_columns[floor_id] = set()
+            floor_columns[floor_id] = []
             floor_order.append(floor_id)
 
         for col_idx in range(len(column_labels)):
             label = column_labels[col_idx]
             if not isinstance(label, str):
                 label = str(label) if label is not None else f"UNLABELED_{col_idx}"
-
             footprint = column_footprints[col_idx] if col_idx < len(column_footprints) else None
-            if format_cross_section(footprint) is not None:
-                floor_columns[floor_id].add(label)
+            point = column_points[col_idx] if col_idx < len(column_points) else None
+            if footprint is None or footprint.is_empty or point is None:
+                continue
+            floor_columns[floor_id].append((label, point, footprint))
 
     sorted_floors = sorted(floor_order, key=floor_sort_key, reverse=True)
 
     discontinuities = {floor_id: set() for floor_id in sorted_floors}
     for upper, lower in zip(sorted_floors[:-1], sorted_floors[1:]):
-        for label in floor_columns[upper]:
-            if label not in floor_columns[lower]:
-                discontinuities[upper].add(label)
+        lower_footprints = [fp for _, _, fp in floor_columns[lower]]
+        for label, point, upper_fp in floor_columns[upper]:
+            if not any(upper_fp.intersects(lower_fp) for lower_fp in lower_footprints):
+                discontinuities[upper].add((label, round(point.x, 2), round(point.y, 2)))
 
     return discontinuities
 

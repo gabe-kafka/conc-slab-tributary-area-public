@@ -52,7 +52,7 @@ def _serialize_column(
     col_idx: int,
     floor_plan: Dict,
     facade_length_map: Dict[str, float],
-    ending_labels: set,
+    ending_keys: set,
 ) -> Dict[str, Any]:
     label = floor_plan["column_labels"][col_idx]
     point = floor_plan["column_points"][col_idx]
@@ -60,6 +60,8 @@ def _serialize_column(
     footprint = footprints[col_idx] if col_idx < len(footprints) else None
     region = floor_plan["regions"][col_idx] if col_idx < len(floor_plan.get("regions", [])) else None
     area = floor_plan["areas"][col_idx] if col_idx < len(floor_plan.get("areas", [])) else 0.0
+
+    end_key = (label, round(point.x, 2), round(point.y, 2))
 
     return {
         "index": col_idx,
@@ -74,7 +76,7 @@ def _serialize_column(
             col_idx,
         ),
         "facade_length_ft": round(facade_length_map.get(label, 0.0), 2),
-        "ends_here": label in ending_labels,
+        "ends_here": end_key in ending_keys,
     }
 
 
@@ -177,10 +179,10 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
 
         # Serialize columns
         floor_id = fp.get("floor_number", fp.get("boundary_id", f"FLOOR_{fp['index']}"))
-        ending_labels = discontinuities.get(floor_id, set())
+        ending_keys = discontinuities.get(floor_id, set())
         column_count = len(fp.get("column_points", []))
         columns = [
-            _serialize_column(i, fp, facade_length_map, ending_labels)
+            _serialize_column(i, fp, facade_length_map, ending_keys)
             for i in range(column_count)
         ]
 
