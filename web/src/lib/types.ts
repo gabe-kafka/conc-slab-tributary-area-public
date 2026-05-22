@@ -123,6 +123,14 @@ export type AlignmentDatumSource =
   | "slab_centroid"
   | "none";
 
+export interface DraftingError {
+  point: [number, number];
+  bbox: [number, number, number, number];
+  kind: string;
+  source_layer: string;
+  reason: string;
+}
+
 export interface FloorData {
   floor_id: string;
   floor_index: number;
@@ -135,6 +143,7 @@ export interface FloorData {
   facade_perimeter_ft: number;
   alignment_datum: [number, number] | null;
   alignment_datum_source: AlignmentDatumSource;
+  drafting_errors: DraftingError[];
 }
 
 export interface GeometryBounds {

@@ -568,6 +568,10 @@ def normalize_column_label_text(label):
 # --- Load data ---
 points_df = pd.read_csv("dxf_points.csv")
 boundary_df = pd.read_csv("dxf_boundaries.csv")
+try:
+    drafting_errors_df = pd.read_csv("dxf_drafting_errors.csv")
+except FileNotFoundError:
+    drafting_errors_df = pd.DataFrame(columns=["x", "y", "min_x", "min_y", "max_x", "max_y", "kind", "source_layer", "reason"])
 column_footprints_by_id = load_column_footprints()
 job_config = load_job_config()
 INCHES_TO_FEET = unit_factor(job_config["source_units"])
@@ -1439,6 +1443,33 @@ for entity in input_msp:
 print(f"Copied {entities_copied} entities from input DXF")
 if entities_skipped > 0:
     print(f"Skipped {entities_skipped} entities (unsupported types or errors)")
+
+# --- Assign drafting-error candidates to their floor by slab containment ---
+for fp in floor_plans:
+    fp['drafting_errors'] = []
+if not drafting_errors_df.empty:
+    for _, row in drafting_errors_df.iterrows():
+        pt = Point(float(row['x']), float(row['y']))
+        for fp in floor_plans:
+            slab = fp.get('slab_polygon')
+            if slab is None or slab.is_empty:
+                continue
+            if slab.covers(pt):
+                fp['drafting_errors'].append({
+                    'x': float(row['x']),
+                    'y': float(row['y']),
+                    'min_x': float(row['min_x']),
+                    'min_y': float(row['min_y']),
+                    'max_x': float(row['max_x']),
+                    'max_y': float(row['max_y']),
+                    'kind': str(row['kind']),
+                    'source_layer': str(row['source_layer']),
+                    'reason': str(row['reason']),
+                })
+                break
+    total = sum(len(fp['drafting_errors']) for fp in floor_plans)
+    if total:
+        print(f"Drafting-error candidates assigned to floors: {total}")
 
 # --- Assign user-supplied DATUM points to their floor by slab containment ---
 if user_datum_points:

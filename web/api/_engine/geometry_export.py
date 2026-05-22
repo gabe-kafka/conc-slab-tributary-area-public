@@ -218,6 +218,21 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
                 if datum_point is not None else None
             ),
             "alignment_datum_source": datum_info.get("source", "none"),
+            "drafting_errors": [
+                {
+                    "point": [round(e["x"], COORD_PRECISION), round(e["y"], COORD_PRECISION)],
+                    "bbox": [
+                        round(e["min_x"], COORD_PRECISION),
+                        round(e["min_y"], COORD_PRECISION),
+                        round(e["max_x"], COORD_PRECISION),
+                        round(e["max_y"], COORD_PRECISION),
+                    ],
+                    "kind": e.get("kind", ""),
+                    "source_layer": e.get("source_layer", ""),
+                    "reason": e.get("reason", ""),
+                }
+                for e in fp.get("drafting_errors") or []
+            ],
         })
 
     return {

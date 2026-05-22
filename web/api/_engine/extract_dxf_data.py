@@ -47,6 +47,62 @@ column_footprints = []
 column_labels = []
 floor_numbers = []
 skipped_column_footprints = 0
+drafting_errors = []
+
+DRAFTING_ERROR_MIN_DIM_FT = 0.25
+DRAFTING_ERROR_MAX_DIM_FT = 6.0
+
+
+def _entity_bbox_ft(entity, factor: float):
+    """Return (min_x, min_y, max_x, max_y) for an entity in feet, or None."""
+    coords = []
+    kind = entity.dxftype()
+    try:
+        if kind == "LWPOLYLINE":
+            coords = [(p[0], p[1]) for p in entity.get_points()]
+        elif kind == "POLYLINE":
+            coords = [(v.dxf.location.x, v.dxf.location.y) for v in entity.vertices]
+        elif kind == "LINE":
+            s, e = entity.dxf.start, entity.dxf.end
+            coords = [(s.x, s.y), (e.x, e.y)]
+        elif kind == "CIRCLE":
+            c, r = entity.dxf.center, entity.dxf.radius
+            coords = [(c.x - r, c.y - r), (c.x + r, c.y + r)]
+        elif kind == "ARC":
+            c, r = entity.dxf.center, entity.dxf.radius
+            coords = [(c.x - r, c.y - r), (c.x + r, c.y + r)]
+    except Exception:
+        return None
+    if not coords:
+        return None
+    xs = [c[0] * factor for c in coords]
+    ys = [c[1] * factor for c in coords]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _record_drafting_error(entity, layer: str, factor: float, reason: str):
+    """If an entity on a column layer looks column-sized but didn't qualify
+    as a footprint, record it so the user can spot the drafting issue."""
+    bbox = _entity_bbox_ft(entity, factor)
+    if bbox is None:
+        return
+    min_x, min_y, max_x, max_y = bbox
+    w = max_x - min_x
+    h = max_y - min_y
+    max_dim = max(w, h)
+    if max_dim < DRAFTING_ERROR_MIN_DIM_FT or max_dim > DRAFTING_ERROR_MAX_DIM_FT:
+        return
+    drafting_errors.append({
+        "x": (min_x + max_x) / 2.0,
+        "y": (min_y + max_y) / 2.0,
+        "min_x": min_x,
+        "min_y": min_y,
+        "max_x": max_x,
+        "max_y": max_y,
+        "kind": entity.dxftype(),
+        "source_layer": layer,
+        "reason": reason,
+    })
 
 for entity in msp:
     layer = getattr(entity.dxf, "layer", "")
@@ -90,6 +146,10 @@ for entity in msp:
             )
         elif polygon is not None and not polygon.is_empty:
             skipped_column_footprints += 1
+            _record_drafting_error(entity, layer, factor, "too_small")
+        else:
+            # No polygon at all — open polyline, single line, etc.
+            _record_drafting_error(entity, layer, factor, "open_polyline")
         continue
 
     if kind in {"TEXT", "MTEXT"} and layer in column_label_layers:
@@ -224,11 +284,17 @@ footprints_df = pd.DataFrame(
     ],
 )
 
+drafting_errors_df = pd.DataFrame(
+    drafting_errors,
+    columns=["x", "y", "min_x", "min_y", "max_x", "max_y", "kind", "source_layer", "reason"],
+)
+
 points_df.to_csv("dxf_points.csv", index=False)
 boundaries_df.to_csv("dxf_boundaries.csv", index=False)
 footprints_df.to_csv("dxf_column_footprints.csv", index=False)
 column_labels_df.to_csv("dxf_column_labels.csv", index=False)
 floor_numbers_df.to_csv("dxf_floor_numbers.csv", index=False)
+drafting_errors_df.to_csv("dxf_drafting_errors.csv", index=False)
 
 print("Points:", len(points_df))
 print("Column footprints:", footprints_df["footprint_id"].nunique() if not footprints_df.empty else 0)
@@ -236,4 +302,5 @@ print("Skipped tiny column footprint candidates:", skipped_column_footprints)
 print("Boundary loops:", boundaries_df["boundary_id"].nunique() if not boundaries_df.empty else 0)
 print("Column Labels:", len(column_labels_df))
 print("Floor Numbers:", len(floor_numbers_df))
+print("Drafting error candidates:", len(drafting_errors_df))
 print("Detected layers:", ", ".join(all_layers(doc)))

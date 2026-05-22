@@ -842,6 +842,40 @@ export default function TributaryCanvas({
                 );
               })()}
 
+              {/* Drafting errors: yellow X over column-layer geometry that
+                  didn't qualify as a closed-polygon footprint. Helps spot
+                  open polylines, single-line "columns", etc. */}
+              {floor.drafting_errors?.map((err, i) => {
+                const [bx0, by0] = transformPoint(err.bbox[0], err.bbox[1], transform, projection);
+                const [bx1, by1] = transformPoint(err.bbox[2], err.bbox[3], transform, projection);
+                const [cx, cy] = transformPoint(err.point[0], err.point[1], transform, projection);
+                const half = Math.max(Math.abs(bx1 - bx0), Math.abs(by1 - by0)) / 2 + 4 * inv;
+                return (
+                  <Group key={`derr-${i}`} listening={false}>
+                    <Line
+                      points={[cx - half, cy - half, cx + half, cy + half]}
+                      stroke="#facc15"
+                      strokeWidth={1.5 * inv}
+                    />
+                    <Line
+                      points={[cx - half, cy + half, cx + half, cy - half]}
+                      stroke="#facc15"
+                      strokeWidth={1.5 * inv}
+                    />
+                    {viewMode !== "iso" && (
+                      <Text
+                        x={cx + half + 4 * inv}
+                        y={cy - 5 * inv}
+                        text={`DRAFT·${err.reason.toUpperCase()}`}
+                        fontSize={8 * inv}
+                        fontFamily="JetBrains Mono, monospace"
+                        fill="#facc15"
+                      />
+                    )}
+                  </Group>
+                );
+              })}
+
               {/* Transfer scaffolding: ring + dot at columns that end here
                   (no cross section on the floor immediately below). */}
               {floor.columns.map((col) => {
