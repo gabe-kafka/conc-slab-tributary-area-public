@@ -1005,19 +1005,22 @@ export default function TributaryCanvas({
                 );
               })}
 
-              {/* Column labels — anchored to column point, offset right */}
+              {/* Column labels — anchored to column point, offset right.
+                  Show labels even on zero-tributary columns (rescued orphans
+                  outside the slab) so the user can still ID them. */}
               {showLabels && viewMode !== "iso" &&
                 floor.columns.map((col) => {
-                  if (col.area_sf_ceil === 0) return null;
                   const [px, py] = transformPoint(
                     col.point[0],
                     col.point[1],
                     transform,
                     projection,
                   );
-                  const label = showTributaries && showDetail
+                  const hasArea = col.area_sf_ceil > 0;
+                  const label = showTributaries && showDetail && hasArea
                     ? `${col.label}\n${col.area_sf_ceil} SF`
-                    : col.label || `${col.area_sf_ceil}`;
+                    : col.label || (hasArea ? `${col.area_sf_ceil}` : "");
+                  if (!label) return null;
                   return (
                     <Text
                       key={`label-${col.index}`}
