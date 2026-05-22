@@ -116,6 +116,9 @@ export default function TributaryCanvas({
   const [size, setSize] = useState({ width: 800, height: 600 });
   const [stageScale, setStageScale] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
+  const [isSpaceHeld, setIsSpaceHeld] = useState(false);
+  const isSpaceHeldRef = useRef(false);
+  const pointerInsideRef = useRef(false);
   const [isOrbiting, setIsOrbiting] = useState(false);
   const [isoOrbit, setIsoOrbit] = useState<IsoOrbit>({
     yaw: ISO_DEFAULT_YAW,
@@ -411,6 +414,47 @@ export default function TributaryCanvas({
     };
   }, [viewMode]);
 
+  // Spacebar-hold pan mode + global mouseup to clear pan/orbit state
+  // when the user releases outside the canvas.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      // Only activate when the cursor is over the canvas — otherwise
+      // space still triggers checkboxes, buttons, scrolling, etc.
+      if (!pointerInsideRef.current) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON" || target?.isContentEditable) return;
+      if (isSpaceHeldRef.current) return;
+      e.preventDefault();
+      isSpaceHeldRef.current = true;
+      setIsSpaceHeld(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      isSpaceHeldRef.current = false;
+      setIsSpaceHeld(false);
+    };
+    const onMouseUp = () => {
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        setIsPanning(false);
+      }
+      if (isOrbitingRef.current) {
+        isOrbitingRef.current = false;
+        setIsOrbiting(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault();
     const stage = stageRef.current;
@@ -456,7 +500,7 @@ export default function TributaryCanvas({
       return;
     }
 
-    if (shouldStartPan(e, viewMode)) {
+    if (shouldStartPan(e, viewMode, isSpaceHeldRef.current)) {
       e.evt.preventDefault();
       startPan(e.evt.clientX, e.evt.clientY);
       return;
@@ -531,7 +575,12 @@ export default function TributaryCanvas({
   );
 
   return (
-    <div ref={containerRef} className="relative flex-1 bg-bg-base overflow-hidden">
+    <div
+      ref={containerRef}
+      className="relative flex-1 bg-bg-base overflow-hidden"
+      onMouseEnter={() => { pointerInsideRef.current = true; }}
+      onMouseLeave={() => { pointerInsideRef.current = false; }}
+    >
       {datumEditFloorId && (
         <div className="pointer-events-none absolute left-3 top-3 z-10 border border-warning/60 bg-bg-surface/95 px-2 py-1 text-[10px] uppercase tracking-wider text-warning">
           Pick datum: {datumEditFloorId}
@@ -553,9 +602,11 @@ export default function TributaryCanvas({
             ? "grabbing"
             : datumEditFloorId
               ? "crosshair"
-              : viewMode === "iso"
+              : isSpaceHeld
                 ? "grab"
-                : "default",
+                : viewMode === "iso"
+                  ? "grab"
+                  : "default",
         }}
       >
         <Layer>
@@ -1644,9 +1695,13 @@ function firstFloorSortValue(floor: FloorData): number {
 function shouldStartPan(
   e: Konva.KonvaEventObject<MouseEvent>,
   viewMode: ViewMode,
+  spaceHeld: boolean,
 ): boolean {
   const { button, shiftKey, altKey } = e.evt;
+  // Space + any button, middle/right click, or shift/alt modifier always pan.
+  if (spaceHeld) return true;
   if (button === 1 || button === 2 || shiftKey || altKey) return true;
+  // Plan view: primary click on empty stage background pans.
   return viewMode === "plan" && button === 0 && e.target === e.target.getStage();
 }
 
