@@ -83,6 +83,7 @@ export function buildFloorInstances(
 export function floorSortValue(floorId: string): number {
   const floorText = floorId.trim().toUpperCase();
 
+  if (floorText.includes("BULKHEAD") || floorText.includes("BULK HEAD")) return 950;
   if (floorText.includes("ROOF") && floorText.includes("MAIN")) return 1000;
   if (floorText.includes("ROOF")) return 900;
   if (floorText.includes("PENTHOUSE") || floorText === "PH") return 800;

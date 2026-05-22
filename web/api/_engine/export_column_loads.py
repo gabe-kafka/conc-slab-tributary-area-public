@@ -22,6 +22,8 @@ from fascade_utils import (
 RANGE_FLOOR_RE = re.compile(r'^\s*([A-Za-z]*)(\d+)\s*[-–—]\s*([A-Za-z]*)(\d+)\s*$')
 
 CORNER_ANGLE_THRESHOLD = 160.0  # degrees — vertices with interior angle below this are "true corners"
+MIN_ALIGNMENT_LABELS = 3
+MAX_ALIGNMENT_RESIDUAL_FEET = 8.0
 
 
 def alphanumeric_sort_key(label):
@@ -53,7 +55,9 @@ def floor_sort_key(floor_id):
     floor_str = str(floor_id).upper()
     
     # Define priority order (higher number = appears first)
-    if 'ROOF' in floor_str and 'MAIN' in floor_str:
+    if 'BULKHEAD' in floor_str or 'BULK HEAD' in floor_str:
+        return (950, floor_str)
+    elif 'ROOF' in floor_str and 'MAIN' in floor_str:
         return (1000, floor_str)
     elif 'ROOF' in floor_str:
         return (900, floor_str)
@@ -398,6 +402,71 @@ def compute_floor_datums(floor_plans):
     return result
 
 
+def _normalize_alignment_label(label):
+    value = re.sub(r'\s+', '', str(label or '').strip().upper())
+    if not value or 'UNLABELED' in value:
+        return None
+    return value
+
+
+def _median(values):
+    values = list(values)
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    mid = len(sorted_values) // 2
+    if len(sorted_values) % 2 == 1:
+        return sorted_values[mid]
+    return (sorted_values[mid - 1] + sorted_values[mid]) / 2.0
+
+
+def _column_label_centers(columns):
+    grouped = {}
+    for label, point, _footprint in columns:
+        normalized = _normalize_alignment_label(label)
+        if not normalized or point is None:
+            continue
+        current = grouped.setdefault(normalized, [0.0, 0.0, 0])
+        current[0] += point.x
+        current[1] += point.y
+        current[2] += 1
+
+    return {
+        label: (total_x / count, total_y / count)
+        for label, (total_x, total_y, count) in grouped.items()
+        if count > 0
+    }
+
+
+def _median_label_offset(upper_columns, lower_columns):
+    upper_centers = _column_label_centers(upper_columns)
+    lower_centers = _column_label_centers(lower_columns)
+    dxs = []
+    dys = []
+
+    for label, upper_point in upper_centers.items():
+        lower_point = lower_centers.get(label)
+        if lower_point is None:
+            continue
+        dxs.append(lower_point[0] - upper_point[0])
+        dys.append(lower_point[1] - upper_point[1])
+
+    if len(dxs) < MIN_ALIGNMENT_LABELS:
+        return None
+
+    dx = _median(dxs)
+    dy = _median(dys)
+    residual = _median(
+        math.hypot(candidate_dx - dx, dys[index] - dy)
+        for index, candidate_dx in enumerate(dxs)
+    )
+
+    if residual > MAX_ALIGNMENT_RESIDUAL_FEET:
+        return None
+
+    return dx, dy
+
+
 def collect_column_discontinuities(floor_plans, floor_datums=None):
     """
     Polygon-overlap discontinuity check, with floors aligned via the
@@ -448,28 +517,29 @@ def collect_column_discontinuities(floor_plans, floor_datums=None):
                 continue
             floor_data[floor_id]["columns"].append((label, point, footprint))
 
-    sorted_floors = sorted(floor_order, key=floor_sort_key, reverse=True)
+    sorted_floors = [
+        floor_id for floor_id in sorted(floor_order, key=floor_sort_key, reverse=True)
+        if floor_data[floor_id]["columns"]
+    ]
 
-    discontinuities = {floor_id: set() for floor_id in sorted_floors}
+    discontinuities = {floor_id: set() for floor_id in floor_order}
     for upper, lower in zip(sorted_floors[:-1], sorted_floors[1:]):
         upper_d = floor_data[upper]
         lower_d = floor_data[lower]
-        if upper_d["origin"] is None or lower_d["origin"] is None:
+        label_offset = _median_label_offset(upper_d["columns"], lower_d["columns"])
+        if label_offset is not None:
+            dx, dy = label_offset
+        elif upper_d["origin"] is None or lower_d["origin"] is None:
             # No datum — fall back to label match for this pair.
             lower_labels = {label for label, _, _ in lower_d["columns"]}
             for label, point, _ in upper_d["columns"]:
                 if label not in lower_labels:
                     discontinuities[upper].add((label, round(point.x, 2), round(point.y, 2)))
             continue
-
-        # Stacked convention: x is forced to zero — the user's DXFs draw
-        # each floor directly above the previous in y only. For any other
-        # datum source (AI, wall/slab centroid), use both axes.
-        if upper_d["source"] == "stacked" and lower_d["source"] == "stacked":
-            dx = 0.0
         else:
             dx = lower_d["origin"].x - upper_d["origin"].x
-        dy = lower_d["origin"].y - upper_d["origin"].y
+            dy = lower_d["origin"].y - upper_d["origin"].y
+
         lower_footprints = [fp for _, _, fp in lower_d["columns"]]
 
         # 1-foot proximity tolerance: a column is continuous if its
