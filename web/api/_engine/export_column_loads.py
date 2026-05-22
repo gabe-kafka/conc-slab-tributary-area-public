@@ -327,35 +327,33 @@ def collect_cross_section_data(floor_plans):
 
 def collect_column_discontinuities(floor_plans):
     """
-    Identify column terminations from physical cross-section presence.
+    Identify column terminations from label presence across floors.
 
-    A column "ends" at floor F when it has a cross section on F but not on
-    the floor immediately below AND its (x,y) on F falls inside the lower
-    floor's slab. If the column's location is outside the lower slab, the
-    column is assumed to continue through air space (cantilever stepback,
-    bay window framing, etc.) — no transfer marker.
+    A column "ends" at floor F when its label appears (with a cross
+    section) on F but not on the floor immediately below. The bottom
+    floor has no discontinuities — those columns continue to foundation.
 
-    Bottom floor has no discontinuities — those columns are assumed to
-    continue to foundation.
+    Pure label match is correct even when floor drawings sit in different
+    (x,y) regions of the DXF: orphan rescue upstream (tributary.py) puts
+    out-of-slab columns onto their nearest floor's label list, so a
+    continuous-but-outside-slab column still shows the same label on
+    both upper and lower floors and is not flagged.
 
     Keyed by raw floor_plan floor_id (matches serialize_floor_plans), so
     grouped identifiers like "4-8" are preserved rather than expanded.
 
     Returns: { floor_id: set(column_label) }
     """
-    floor_columns = {}  # floor_id -> {label: Point}
-    floor_slabs = {}    # floor_id -> slab_polygon (or None)
+    floor_columns = {}  # floor_id -> set of labels with a cross section
     floor_order = []
 
     for floor_plan in floor_plans:
         floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
         column_labels = floor_plan.get('column_labels', [])
-        column_points = floor_plan.get('column_points', [])
         column_footprints = floor_plan.get('column_footprints', [])
 
         if floor_id not in floor_columns:
-            floor_columns[floor_id] = {}
-            floor_slabs[floor_id] = floor_plan.get('slab_polygon')
+            floor_columns[floor_id] = set()
             floor_order.append(floor_id)
 
         for col_idx in range(len(column_labels)):
@@ -364,25 +362,15 @@ def collect_column_discontinuities(floor_plans):
                 label = str(label) if label is not None else f"UNLABELED_{col_idx}"
 
             footprint = column_footprints[col_idx] if col_idx < len(column_footprints) else None
-            if format_cross_section(footprint) is None:
-                continue
-            point = column_points[col_idx] if col_idx < len(column_points) else None
-            if point is not None:
-                floor_columns[floor_id][label] = point
+            if format_cross_section(footprint) is not None:
+                floor_columns[floor_id].add(label)
 
     sorted_floors = sorted(floor_order, key=floor_sort_key, reverse=True)
 
     discontinuities = {floor_id: set() for floor_id in sorted_floors}
     for upper, lower in zip(sorted_floors[:-1], sorted_floors[1:]):
-        lower_slab = floor_slabs.get(lower)
-        lower_columns = floor_columns[lower]
-        for label, upper_point in floor_columns[upper].items():
-            if label in lower_columns:
-                continue
-            # Column missing below. Only treat as transfer if the point
-            # actually lands on the lower slab — otherwise it's outside
-            # the structure and assumed continuous through air space.
-            if lower_slab is None or lower_slab.is_empty or lower_slab.covers(upper_point):
+        for label in floor_columns[upper]:
+            if label not in floor_columns[lower]:
                 discontinuities[upper].add(label)
 
     return discontinuities
