@@ -158,7 +158,17 @@ def serialize_floor_plans(floor_plans: List[Dict]) -> Dict[str, Any]:
     min_x = min_y = float("inf")
     max_x = max_y = float("-inf")
 
-    floor_datums = compute_floor_datums(floor_plans)
+    # Reuse datums precomputed by tributary.py (attached to each floor_plan)
+    # when present, so the AI call doesn't fire twice per upload.
+    floor_datums = {}
+    for fp in floor_plans:
+        floor_id = fp.get("floor_number", fp.get("boundary_id", f"FLOOR_{fp.get('index', '?')}"))
+        attached = fp.get("alignment_datum")
+        if attached:
+            floor_datums[floor_id] = attached
+    if not floor_datums:
+        floor_datums = compute_floor_datums(floor_plans)
+
     discontinuities = collect_column_discontinuities(floor_plans, floor_datums=floor_datums)
 
     floors = []

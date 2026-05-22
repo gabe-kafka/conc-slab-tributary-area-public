@@ -11,7 +11,7 @@ import ezdxf
 from ezdxf import colors
 
 from geometry_export import export_geometry_json
-from export_column_loads import export_column_load_takedown
+from export_column_loads import export_column_load_takedown, compute_floor_datums
 from fascade_utils import (
     compute_fascade_assignments,
     FASCADE_DISTANCE_THRESHOLD,
@@ -1425,6 +1425,12 @@ print(f"Copied {entities_copied} entities from input DXF")
 if entities_skipped > 0:
     print(f"Skipped {entities_skipped} entities (unsupported types or errors)")
 
+# --- Compute alignment datums once, attach to each floor_plan ---
+_floor_datums = compute_floor_datums(floor_plans)
+for _fp in floor_plans:
+    _fid = _fp.get('floor_number', _fp.get('boundary_id', 'UNKNOWN'))
+    _fp['alignment_datum'] = _floor_datums.get(_fid, {})
+
 # --- Process each floor plan for DXF output ---
 for floor_plan in floor_plans:
     floor_idx = floor_plan['index']
@@ -1456,7 +1462,32 @@ for floor_plan in floor_plans:
     
     wall_layer_obj = dxf_doc.layers.add(wall_layer)
     wall_layer_obj.color = colors.CYAN
-    
+
+    datum_layer = f'FLOOR_{floor_idx}_DATUM'
+    datum_layer_obj = dxf_doc.layers.add(datum_layer)
+    datum_layer_obj.color = colors.CYAN
+
+    # --- Add alignment datum marker (crosshair + ring + label) ---
+    datum_info = floor_plan.get('alignment_datum') or {}
+    datum_point = datum_info.get('point')
+    if datum_point is not None:
+        dx_in = datum_point[0] * OUTPUT_SCALE
+        dy_in = datum_point[1] * OUTPUT_SCALE
+        # Ring + crosshair sized in DXF units (inches). Slab dims are
+        # ~2000 inches across, so a 24-inch marker reads cleanly.
+        ring_r = 24.0
+        arm = 36.0
+        ring = msp.add_circle((dx_in, dy_in), ring_r)
+        ring.dxf.layer = datum_layer
+        h_arm = msp.add_line((dx_in - arm, dy_in), (dx_in + arm, dy_in))
+        h_arm.dxf.layer = datum_layer
+        v_arm = msp.add_line((dx_in, dy_in - arm), (dx_in, dy_in + arm))
+        v_arm.dxf.layer = datum_layer
+        label_text = f"DATUM·{(datum_info.get('source') or 'NONE').upper()}"
+        label = msp.add_text(label_text, dxfattribs={"height": 12.0})
+        label.dxf.layer = datum_layer
+        label.dxf.insert = (dx_in + arm + 6.0, dy_in - 6.0)
+
     # --- Add slab boundary to DXF output ---
     if slab_polygon.geom_type == 'Polygon':
         slab_polygons = [slab_polygon]
