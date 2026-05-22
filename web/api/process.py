@@ -65,7 +65,12 @@ def _run_script(script_name: str, workspace: Path) -> tuple[list[str], str | Non
     import multiprocessing
 
     script_path = os.path.join(ENGINE_DIR, script_name)
-    saved_cwd = os.getcwd()
+    # Capture cwd defensively — if the prior request left us inside a
+    # since-deleted workspace, os.getcwd() can raise FileNotFoundError.
+    try:
+        saved_cwd = os.getcwd()
+    except (FileNotFoundError, OSError):
+        saved_cwd = ENGINE_DIR
     captured = io.StringIO()
 
     # Redirect stdout to capture logs
@@ -89,13 +94,29 @@ def _run_script(script_name: str, workspace: Path) -> tuple[list[str], str | Non
     finally:
         multiprocessing.cpu_count = original_cpu_count
         sys.stdout = saved_stdout
-        os.chdir(saved_cwd)
+        # Restore cwd defensively; fall back to ENGINE_DIR if saved_cwd
+        # was deleted mid-flight. A raise here would mask the real
+        # (logs, error) return value.
+        try:
+            os.chdir(saved_cwd)
+        except (FileNotFoundError, OSError):
+            try:
+                os.chdir(ENGINE_DIR)
+            except (FileNotFoundError, OSError):
+                pass
 
 
 def _process(blob_url: str, source_units: str, layer_mapping: dict) -> dict:
     """Run the full engine pipeline synchronously."""
     workspace = Path(f"/tmp/tributary-{uuid.uuid4().hex}")
     workspace.mkdir(parents=True, exist_ok=True)
+
+    # If cwd was left inside a previously-deleted workspace by a prior
+    # warm invocation, anchor it here before doing anything path-relative.
+    try:
+        os.getcwd()
+    except (FileNotFoundError, OSError):
+        os.chdir(ENGINE_DIR)
 
     try:
         # 1. Download DXF from Blob
