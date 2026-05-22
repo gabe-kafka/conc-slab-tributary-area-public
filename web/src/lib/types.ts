@@ -24,6 +24,7 @@ export interface LayerMapping {
   support_point: string[];
   column_label: string[];
   floor_label: string[];
+  datum: string[];
 }
 
 // --- Process Result ---
@@ -115,6 +116,7 @@ export interface FacadeSegment {
 }
 
 export type AlignmentDatumSource =
+  | "user"
   | "stacked"
   | "ai"
   | "wall_centroid"

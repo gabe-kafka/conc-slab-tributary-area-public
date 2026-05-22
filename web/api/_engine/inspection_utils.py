@@ -37,6 +37,7 @@ ROLE_KEYWORDS = {
     ],
     "column_label": ["column number", "col no", "column id", "column label", "column"],
     "floor_label": ["floor number", "level", "story", "storey", "floor"],
+    "datum": ["datum"],
 }
 
 
@@ -194,6 +195,12 @@ def _request_ai_layer_suggestions(
                             ),
                             "column_label": "Text layer containing column labels or column numbers.",
                             "floor_label": "Text layer containing floor, level, story, or roof labels.",
+                            "datum": (
+                                "POINT entities marking the user-set alignment datum for "
+                                "each floor (one point per floor, typically an inside corner "
+                                "of an elevator/stair core). Used to align floors for "
+                                "cross-floor column-continuity checks."
+                            ),
                         },
                         "layer_metadata": layer_metadata,
                         "deterministic_baseline": fallback_suggestions,

@@ -608,6 +608,21 @@ for entity in input_msp:
             pass
 print(f"Found {len(wall_entities)} WALL entities in input DXF (including exploded blocks)")
 
+# Extract DATUM POINTs (user-set per-floor alignment markers). Coordinates
+# are converted to feet so they match floor_plan['slab_polygon'].
+datum_layers = set(job_config["layers"].get("datum", []) or [])
+user_datum_points = []
+for entity in input_msp:
+    if not hasattr(entity.dxf, 'layer'):
+        continue
+    if entity.dxf.layer in datum_layers and entity.dxftype() == 'POINT':
+        loc = entity.dxf.location
+        user_datum_points.append(
+            Point(loc.x * INCHES_TO_FEET, loc.y * INCHES_TO_FEET)
+        )
+if user_datum_points:
+    print(f"Found {len(user_datum_points)} DATUM point(s) in input DXF")
+
 # --- Extract wall entities and generate support points ---
 wall_data_list = []
 
@@ -1424,6 +1439,17 @@ for entity in input_msp:
 print(f"Copied {entities_copied} entities from input DXF")
 if entities_skipped > 0:
     print(f"Skipped {entities_skipped} entities (unsupported types or errors)")
+
+# --- Assign user-supplied DATUM points to their floor by slab containment ---
+if user_datum_points:
+    for fp in floor_plans:
+        slab = fp.get('slab_polygon')
+        if slab is None or slab.is_empty:
+            continue
+        for dp in user_datum_points:
+            if slab.covers(dp):
+                fp['user_datum'] = (dp.x, dp.y)
+                break
 
 # --- Compute alignment datums once, attach to each floor_plan ---
 _floor_datums = compute_floor_datums(floor_plans)

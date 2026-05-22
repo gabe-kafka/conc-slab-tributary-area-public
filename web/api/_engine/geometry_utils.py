@@ -22,6 +22,7 @@ DEFAULT_LAYER_CONFIG = {
     "support_point": ["POINTS", "COLUMNS", "COLUMN", "POINT"],
     "column_label": ["COLUMN NUMBER"],
     "floor_label": ["FLOOR NUMBER"],
+    "datum": ["DATUM"],
 }
 
 

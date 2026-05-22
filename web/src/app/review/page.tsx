@@ -12,6 +12,7 @@ const ROLES = [
   { key: "beam", label: "Beams", required: false },
   { key: "column_label", label: "Column Labels", required: false },
   { key: "floor_label", label: "Floor Labels", required: false },
+  { key: "datum", label: "Datum", required: false },
 ] as const;
 
 const EMPTY_MAPPING: LayerMapping = {
@@ -22,6 +23,7 @@ const EMPTY_MAPPING: LayerMapping = {
   support_point: [],
   column_label: [],
   floor_label: [],
+  datum: [],
 };
 
 function readDraftFromSession(): DraftData | null {
@@ -40,6 +42,7 @@ function mappingFromDraft(draft: DraftData | null): LayerMapping {
     support_point: draft.suggestions.support_point || [],
     column_label: draft.suggestions.column_label || [],
     floor_label: draft.suggestions.floor_label || [],
+    datum: draft.suggestions.datum || [],
   };
 }
 

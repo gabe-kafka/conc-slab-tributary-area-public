@@ -372,6 +372,11 @@ def compute_floor_datums(floor_plans):
         if floor_id in result:
             continue
 
+        user_datum = floor_plan.get('user_datum')
+        if user_datum is not None:
+            result[floor_id] = {"point": (user_datum[0], user_datum[1]), "source": "user"}
+            continue
+
         slab = floor_plan.get('slab_polygon')
         if slab is not None and not slab.is_empty:
             min_x, min_y, _, _ = slab.bounds
