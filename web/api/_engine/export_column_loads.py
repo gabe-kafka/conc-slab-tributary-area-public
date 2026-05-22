@@ -325,32 +325,61 @@ def collect_cross_section_data(floor_plans):
     }
 
 
+def _floor_alignment_origin(floor_plan):
+    """Per-floor datum point for aligning column footprints across floors.
+
+    Prefers the length-weighted centroid of wall lines (core/stair walls
+    are typically the most stable feature floor-to-floor). Falls back to
+    the slab polygon centroid when no walls are present.
+    """
+    from shapely.ops import unary_union
+
+    walls = floor_plan.get("walls") or []
+    wall_lines = [
+        w.get("wall_line") for w in walls
+        if w.get("wall_line") is not None and not w["wall_line"].is_empty
+    ]
+    if wall_lines:
+        merged = unary_union(wall_lines)
+        if not merged.is_empty:
+            return merged.centroid
+
+    slab = floor_plan.get("slab_polygon")
+    if slab is not None and not slab.is_empty:
+        return slab.centroid
+
+    return None
+
+
 def collect_column_discontinuities(floor_plans):
     """
-    Identify column terminations from label presence across floors.
+    Polygon-overlap discontinuity check, with floors aligned via the
+    length-weighted centroid of each floor's wall geometry.
 
-    A column on floor F is continuous iff its label (with a footprint)
-    also appears on the floor immediately below. Bottom floor has no
-    discontinuities — those columns continue to foundation.
+    A column on floor F is continuous iff its (translated) footprint
+    intersects any column footprint on the floor immediately below.
 
-    Label match is used (not polygon overlap) because floor drawings in
-    a typical multi-story DXF live in separate (x,y) regions of model
-    space — slab polygons do not share a coordinate system across
-    floors, so geometric intersection cannot work without first aligning
-    the floor frames.
+    Bottom floor has no discontinuities — those columns are assumed to
+    continue to foundation.
 
-    Returns: { floor_id: set(column_label) }
+    Returns: { floor_id: set((label, point_x, point_y)) }
     """
-    floor_columns = {}  # floor_id -> set of labels with a cross section
+    from shapely.affinity import translate
+
+    floor_data = {}  # floor_id -> {origin, columns: [(label, point, footprint)]}
     floor_order = []
 
     for floor_plan in floor_plans:
         floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
         column_labels = floor_plan.get('column_labels', [])
+        column_points = floor_plan.get('column_points', [])
         column_footprints = floor_plan.get('column_footprints', [])
 
-        if floor_id not in floor_columns:
-            floor_columns[floor_id] = set()
+        if floor_id not in floor_data:
+            floor_data[floor_id] = {
+                "origin": _floor_alignment_origin(floor_plan),
+                "columns": [],
+            }
             floor_order.append(floor_id)
 
         for col_idx in range(len(column_labels)):
@@ -358,16 +387,33 @@ def collect_column_discontinuities(floor_plans):
             if not isinstance(label, str):
                 label = str(label) if label is not None else f"UNLABELED_{col_idx}"
             footprint = column_footprints[col_idx] if col_idx < len(column_footprints) else None
-            if format_cross_section(footprint) is not None:
-                floor_columns[floor_id].add(label)
+            point = column_points[col_idx] if col_idx < len(column_points) else None
+            if footprint is None or footprint.is_empty or point is None:
+                continue
+            floor_data[floor_id]["columns"].append((label, point, footprint))
 
     sorted_floors = sorted(floor_order, key=floor_sort_key, reverse=True)
 
     discontinuities = {floor_id: set() for floor_id in sorted_floors}
     for upper, lower in zip(sorted_floors[:-1], sorted_floors[1:]):
-        for label in floor_columns[upper]:
-            if label not in floor_columns[lower]:
-                discontinuities[upper].add(label)
+        upper_d = floor_data[upper]
+        lower_d = floor_data[lower]
+        if upper_d["origin"] is None or lower_d["origin"] is None:
+            # No datum — fall back to label match for this pair.
+            lower_labels = {label for label, _, _ in lower_d["columns"]}
+            for label, point, _ in upper_d["columns"]:
+                if label not in lower_labels:
+                    discontinuities[upper].add((label, round(point.x, 2), round(point.y, 2)))
+            continue
+
+        dx = lower_d["origin"].x - upper_d["origin"].x
+        dy = lower_d["origin"].y - upper_d["origin"].y
+        lower_footprints = [fp for _, _, fp in lower_d["columns"]]
+
+        for label, point, upper_fp in upper_d["columns"]:
+            translated = translate(upper_fp, xoff=dx, yoff=dy)
+            if not any(translated.intersects(lp) for lp in lower_footprints):
+                discontinuities[upper].add((label, round(point.x, 2), round(point.y, 2)))
 
     return discontinuities
 
