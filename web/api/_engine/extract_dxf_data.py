@@ -146,10 +146,9 @@ for entity in msp:
             )
         elif polygon is not None and not polygon.is_empty:
             skipped_column_footprints += 1
-            _record_drafting_error(entity, layer, factor, "too_small")
         else:
-            # No polygon at all — open polyline, single line, etc.
-            _record_drafting_error(entity, layer, factor, "open_polyline")
+            # No closed polygon — open polyline, 2-point "closed" line, etc.
+            _record_drafting_error(entity, layer, factor, "not_closed")
         continue
 
     if kind in {"TEXT", "MTEXT"} and layer in column_label_layers:
