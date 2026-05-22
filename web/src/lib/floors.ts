@@ -10,6 +10,11 @@ export interface RenderFloorInstance {
   instanceId: string;
   stackIndex: number;
   floorElevation: number;
+  // True when this is the lowest expansion of a grouped floor (e.g.
+  // "29-35" → only the "29" instance has this set to true). Used to
+  // limit per-floor markers (transfer dot, etc.) to one plate per
+  // logical group instead of repeating them across every stacked level.
+  isBottomOfGroup: boolean;
 }
 
 export function expandFloorIdentifier(floorId: string): string[] {
@@ -57,6 +62,9 @@ export function buildFloorInstances(
       instanceId: `${floor.floor_index}:${floor.floor_id}:${displayFloorId}:${repeatIndex}`,
       stackIndex: 0,
       floorElevation: 0,
+      // expandFloorIdentifier returns from start→end (low to high), so
+      // index 0 is the lowest physical floor of the group.
+      isBottomOfGroup: repeatIndex === 0,
     })),
   );
 

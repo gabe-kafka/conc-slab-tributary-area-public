@@ -883,8 +883,10 @@ export default function TributaryCanvas({
               })}
 
               {/* Transfer scaffolding: ring + dot at columns that end here
-                  (no cross section on the floor immediately below). */}
-              {floor.columns.map((col) => {
+                  (no cross section on the floor immediately below).
+                  Only render on the lowest plate of a grouped floor like
+                  "29-35" so the marker doesn't repeat on each stack level. */}
+              {instance.isBottomOfGroup && floor.columns.map((col) => {
                 if (!col.ends_here) return null;
                 const [cx, cy] = transformPoint(
                   col.point[0],
