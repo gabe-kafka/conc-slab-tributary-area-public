@@ -306,7 +306,7 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
             </span>
           </label>
           {[
-            { label: "Slabs", checked: showSlabs, set: setShowSlabs },
+            { label: "Slab Boundary", checked: showSlabs, set: setShowSlabs },
             { label: "Walls", checked: showWalls, set: setShowWalls },
             { label: "Columns", checked: showColumns, set: setShowColumns },
             { label: "Beams", checked: showBeams, set: setShowBeams },
