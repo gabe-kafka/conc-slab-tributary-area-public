@@ -194,8 +194,16 @@ def _compute_edge_threshold(column_points, slab_polygon):
 def classify_columns_for_floor(floor_plan):
     """Classify all columns on a floor as center/edge/corner.
 
-    Returns list of KLL values (4, 3, or 2) parallel to column_points.
-    Uses column point distance to slab boundary (not Voronoi regions).
+    Returns list of KLL values parallel to column_points:
+      4 = center
+      3 = edge
+      2 = corner
+      None = no slab at this column on this floor (rescued orphan in an
+             opening) — KLL doesn't apply because no live load is being
+             reduced at this level for this column.
+
+    Edge threshold is computed from columns *inside* the slab only, so
+    orphans far outside don't skew the gap detection.
     """
     column_points = floor_plan.get('column_points', [])
     slab_polygon = floor_plan.get('slab_polygon')
@@ -205,10 +213,19 @@ def classify_columns_for_floor(floor_plan):
 
     boundary = slab_polygon.boundary
     true_corners = _extract_building_corners(slab_polygon)
-    threshold = _compute_edge_threshold(column_points, slab_polygon)
+
+    # Inside-slab columns only contribute to the edge-threshold sample.
+    inside_pts = [pt for pt in column_points if slab_polygon.covers(pt)]
+    threshold = _compute_edge_threshold(inside_pts or column_points, slab_polygon)
 
     kll_values = []
     for col_pt in column_points:
+        if not slab_polygon.covers(col_pt):
+            # Column sits in an opening / outside the slab — no slab attached
+            # at this floor, so KLL is undefined for this level.
+            kll_values.append(None)
+            continue
+
         dist_to_edge = col_pt.distance(boundary)
 
         if dist_to_edge >= threshold:
