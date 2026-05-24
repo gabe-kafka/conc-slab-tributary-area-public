@@ -224,15 +224,19 @@ export default function TributaryCanvas({
       // Phantom extension: when the upper instance is the bottom of its
       // grouped-floor expansion (so its ends_here columns are real
       // transfer events), extend each such column visually down to this
-      // lower instance.
-      if (upper.isBottomOfGroup) {
+      // lower instance. Translate the upper-floor column point into the
+      // lower floor's coordinate system using the alignment-origin delta
+      // so the phantom lands on the slab below, not in DXF model space.
+      if (upper.isBottomOfGroup && upperOrigin && lowerOrigin) {
+        const dx = lowerOrigin[0] - upperOrigin[0];
+        const dy = lowerOrigin[1] - upperOrigin[1];
         for (const col of upper.floor.columns) {
           if (!col.ends_here) continue;
           connections.push({
             kind: "column-phantom",
             lowerInstance: lower,
             upperInstance: upper,
-            lowerPoint: col.point,
+            lowerPoint: [col.point[0] + dx, col.point[1] + dy],
             upperPoint: col.point,
           });
         }
@@ -994,7 +998,9 @@ export default function TributaryCanvas({
               {/* Transfer scaffolding: a column that ends on the floor
                   ABOVE this instance gets visually extended down by one
                   floor — the red ring + dot lands on the slab below the
-                  transfer (i.e. on THIS instance). */}
+                  transfer (i.e. on THIS instance). Upper-floor column
+                  points are translated into this floor's coordinate
+                  system via the alignment-origin delta. */}
               {(() => {
                 const upper = renderFloors.find(
                   (i) =>
@@ -1002,11 +1008,16 @@ export default function TributaryCanvas({
                     visibleFloors.has(i.sourceFloorId),
                 );
                 if (!upper || !upper.isBottomOfGroup) return null;
+                const lowerOrigin = alignmentOriginsByKey.get(floorSourceKey(floor));
+                const upperOrigin = alignmentOriginsByKey.get(floorSourceKey(upper.floor));
+                if (!lowerOrigin || !upperOrigin) return null;
+                const dxAlign = lowerOrigin[0] - upperOrigin[0];
+                const dyAlign = lowerOrigin[1] - upperOrigin[1];
                 return upper.floor.columns.map((col) => {
                   if (!col.ends_here) return null;
                   const [cx, cy] = transformPoint(
-                    col.point[0],
-                    col.point[1],
+                    col.point[0] + dxAlign,
+                    col.point[1] + dyAlign,
                     transform,
                     projection,
                   );
