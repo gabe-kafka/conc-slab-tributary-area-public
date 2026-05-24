@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import TributaryCanvas from "./canvas/TributaryCanvas";
 import {
   expandedPhysicalFloorCount,
@@ -54,6 +54,19 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("plan");
   const [datumPoints, setDatumPoints] = useState<DatumPoints>({});
   const [datumEditFloorId, setDatumEditFloorId] = useState<string | null>(null);
+
+  // Apply mode-specific element-toggle defaults whenever the view mode
+  // changes. Iso defaults: tributaries off, walls off (so you can see
+  // the column stack cleanly through the building); plan defaults: both on.
+  useEffect(() => {
+    if (viewMode === "iso") {
+      setShowTributaries(false);
+      setShowWalls(false);
+    } else {
+      setShowTributaries(true);
+      setShowWalls(true);
+    }
+  }, [viewMode]);
   const physicalFloorCount = useMemo(
     () => expandedPhysicalFloorCount(geometry.floors),
     [geometry.floors],
