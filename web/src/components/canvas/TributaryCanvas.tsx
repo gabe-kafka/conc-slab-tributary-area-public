@@ -221,6 +221,23 @@ export default function TributaryCanvas({
       const lowerOrigin = alignmentOriginsByKey.get(floorSourceKey(lower.floor));
       const upperOrigin = alignmentOriginsByKey.get(floorSourceKey(upper.floor));
 
+      // Phantom extension: when the upper instance is the bottom of its
+      // grouped-floor expansion (so its ends_here columns are real
+      // transfer events), extend each such column visually down to this
+      // lower instance.
+      if (upper.isBottomOfGroup) {
+        for (const col of upper.floor.columns) {
+          if (!col.ends_here) continue;
+          connections.push({
+            kind: "column-phantom",
+            lowerInstance: lower,
+            upperInstance: upper,
+            lowerPoint: col.point,
+            upperPoint: col.point,
+          });
+        }
+      }
+
       if (lower.floor === upper.floor) {
         // Grouped-floor expansion (same FloorData on both instances) —
         // every column is identical, just at a different elevation.
@@ -974,36 +991,44 @@ export default function TributaryCanvas({
                 );
               })}
 
-              {/* Transfer scaffolding: ring + dot at columns that end here
-                  (no cross section on the floor immediately below).
-                  Only render on the lowest plate of a grouped floor like
-                  "29-35" so the marker doesn't repeat on each stack level. */}
-              {instance.isBottomOfGroup && floor.columns.map((col) => {
-                if (!col.ends_here) return null;
-                const [cx, cy] = transformPoint(
-                  col.point[0],
-                  col.point[1],
-                  transform,
-                  projection,
+              {/* Transfer scaffolding: a column that ends on the floor
+                  ABOVE this instance gets visually extended down by one
+                  floor — the red ring + dot lands on the slab below the
+                  transfer (i.e. on THIS instance). */}
+              {(() => {
+                const upper = renderFloors.find(
+                  (i) =>
+                    i.stackIndex === instance.stackIndex + 1 &&
+                    visibleFloors.has(i.sourceFloorId),
                 );
-                return (
-                  <Group key={`ends-${col.index}`} listening={false}>
-                    <Circle
-                      x={cx}
-                      y={cy}
-                      radius={(COLUMN_POINT_RADIUS + 4) * inv}
-                      stroke="#ef4444"
-                      strokeWidth={1.75 * inv}
-                    />
-                    <Circle
-                      x={cx}
-                      y={cy}
-                      radius={(COLUMN_POINT_RADIUS - 0.5) * inv}
-                      fill="#ef4444"
-                    />
-                  </Group>
-                );
-              })}
+                if (!upper || !upper.isBottomOfGroup) return null;
+                return upper.floor.columns.map((col) => {
+                  if (!col.ends_here) return null;
+                  const [cx, cy] = transformPoint(
+                    col.point[0],
+                    col.point[1],
+                    transform,
+                    projection,
+                  );
+                  return (
+                    <Group key={`ends-${upper.instanceId}-${col.index}`} listening={false}>
+                      <Circle
+                        x={cx}
+                        y={cy}
+                        radius={(COLUMN_POINT_RADIUS + 4) * inv}
+                        stroke="#ef4444"
+                        strokeWidth={1.75 * inv}
+                      />
+                      <Circle
+                        x={cx}
+                        y={cy}
+                        radius={(COLUMN_POINT_RADIUS - 0.5) * inv}
+                        fill="#ef4444"
+                      />
+                    </Group>
+                  );
+                });
+              })()}
 
               {/* Column labels — anchored to column point, offset right.
                   Show labels even on zero-tributary columns (rescued orphans
@@ -1248,7 +1273,11 @@ export default function TributaryCanvas({
 
           {viewMode === "iso" &&
             verticalConnections
-              .filter((conn) => (conn.kind === "column" ? showColumns : showWalls))
+              .filter((conn) =>
+                conn.kind === "wall"
+                  ? showWalls
+                  : showColumns
+              )
               .map((conn, idx) => {
               const lowerProjection = projectionForFloor(
                 "iso",
@@ -1266,7 +1295,7 @@ export default function TributaryCanvas({
               );
               const inv = 1 / stageScale;
 
-              if (conn.kind === "column") {
+              if (conn.kind === "column" || conn.kind === "column-phantom") {
                 const [lx, ly] = transformPoint(
                   conn.lowerPoint[0],
                   conn.lowerPoint[1],
@@ -1279,13 +1308,15 @@ export default function TributaryCanvas({
                   transform,
                   upperProjection,
                 );
+                const phantom = conn.kind === "column-phantom";
                 return (
                   <Line
                     key={`vconn-${idx}`}
                     points={[lx, ly, ux, uy]}
                     stroke={COLUMN_POINT_COLOR}
-                    strokeWidth={1.5 * inv}
-                    opacity={0.85}
+                    strokeWidth={(phantom ? 1.0 : 1.5) * inv}
+                    opacity={phantom ? 0.45 : 0.85}
+                    dash={phantom ? [6 * inv, 4 * inv] : undefined}
                     lineCap="round"
                     listening={false}
                   />
@@ -1775,6 +1806,16 @@ function isUnlabeledColumn(label: string): boolean {
 type VerticalConnection =
   | {
       kind: "column";
+      lowerInstance: RenderFloorInstance;
+      upperInstance: RenderFloorInstance;
+      lowerPoint: [number, number];
+      upperPoint: [number, number];
+    }
+  | {
+      kind: "column-phantom";
+      // Phantom column extension: a transfer column gets visually extended
+      // one floor below its lowest existing floor so the red dot lands at
+      // the transfer slab below.
       lowerInstance: RenderFloorInstance;
       upperInstance: RenderFloorInstance;
       lowerPoint: [number, number];
