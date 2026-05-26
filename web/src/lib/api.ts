@@ -1,7 +1,7 @@
 import type { DraftData, LayerMapping, ProcessResult } from "./types";
 
 const BASE = "";
-export type DemoId = "default" | "geom_clean_1" | "fulton_365";
+export type DemoId = "default" | "geom_clean_1" | "fulton_356";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);

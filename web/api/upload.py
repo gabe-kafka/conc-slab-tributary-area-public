@@ -31,9 +31,9 @@ DEMO_FILES = {
         "path": DEMO_DIR / "geom_clean_1.dxf",
         "filename": "1025 Atlantic - input.dxf",
     },
-    "fulton_365": {
-        "path": DEMO_DIR / "365_fulton.dxf",
-        "filename": "365 Fulton - input.dxf",
+    "fulton_356": {
+        "path": DEMO_DIR / "356_fulton.dxf",
+        "filename": "356 Fulton - input.dxf",
     },
 }
 
