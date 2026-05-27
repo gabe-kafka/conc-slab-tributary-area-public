@@ -6,6 +6,7 @@ FASCADE_DISTANCE_THRESHOLD = 2.0  # feet
 FASCADE_MAX_DISTANCE = 15.0  # feet (max search radius if no candidates)
 FASCADE_DISTANCE_STEP = 1.0  # feet
 FASCADE_SAMPLE_SPACING = 0.5  # feet
+FASCADE_MIN_SEGMENT_LENGTH = 0.01  # feet
 
 
 def facade_reference_polygon(geometry) -> Optional[Polygon]:
@@ -57,6 +58,207 @@ def compute_fascade_assignments(
     if perimeter <= 0:
         return _empty_result(distance_threshold, 0.0)
 
+    regions = floor_plan.get('regions') or floor_plan.get('column_regions') or []
+    if regions:
+        return _assign_by_voronoi_boundary_edges(
+            floor_plan=floor_plan,
+            boundary_line=boundary_line,
+            perimeter=perimeter,
+            distance_threshold=distance_threshold,
+            sample_spacing=sample_spacing,
+        )
+
+    return _assign_by_boundary_sampling(
+        floor_plan=floor_plan,
+        boundary_line=boundary_line,
+        perimeter=perimeter,
+        distance_threshold=distance_threshold,
+        sample_spacing=sample_spacing,
+        max_distance=max_distance,
+        distance_step=distance_step,
+    )
+
+
+def _assign_by_voronoi_boundary_edges(
+    floor_plan: Dict,
+    boundary_line: LineString,
+    perimeter: float,
+    distance_threshold: float,
+    sample_spacing: float,
+) -> Dict:
+    """Use solved tributary regions to measure ownership along the exterior edge."""
+    column_points = floor_plan.get('column_points', [])
+    column_labels = floor_plan.get('column_labels', [])
+    regions = floor_plan.get('regions') or floor_plan.get('column_regions') or []
+    walls = floor_plan.get('walls', [])
+
+    length_map: Dict[str, float] = {}
+    segments: List[Dict] = []
+    max_distance_seen = 0.0
+
+    participants: List[Dict] = []
+    for idx, region in enumerate(regions[:len(column_points)]):
+        label = column_labels[idx] if idx < len(column_labels) else f"UNLABELED_{idx}"
+        participants.append({
+            'label': label,
+            'geom': column_points[idx],
+            'region': region,
+            'type': 'column',
+            'column_index': idx,
+            'wall_index': None,
+        })
+
+    for wall in walls:
+        region = wall.get('merged_region')
+        label = f"WALL_{wall.get('wall_index', 'UNK')}"
+        participants.append({
+            'label': label,
+            'geom': wall.get('wall_line'),
+            'region': region,
+            'type': 'wall',
+            'column_index': None,
+            'wall_index': wall.get('wall_index'),
+        })
+
+    valid_participants = [
+        participant
+        for participant in participants
+        if participant.get('region') is not None and not getattr(participant.get('region'), 'is_empty', True)
+    ]
+    if not valid_participants:
+        return _empty_result(distance_threshold, perimeter)
+
+    step = max(0.25, sample_spacing)
+    traversed = 0.0
+
+    current_label: Optional[str] = None
+    current_participant: Optional[Dict] = None
+    current_start = 0.0
+
+    def sample_polyline(start_distance: float, end_distance: float) -> List[tuple]:
+        coords: List[tuple] = []
+        distance = start_distance
+        while distance < end_distance - 1e-6:
+            point = boundary_line.interpolate(distance, normalized=False)
+            coords.append((point.x, point.y))
+            distance += step
+
+        end_point = boundary_line.interpolate(end_distance, normalized=False)
+        coords.append((end_point.x, end_point.y))
+        return coords
+
+    def choose_participant(boundary_point) -> Optional[Dict]:
+        best_participant = None
+        best_distance = None
+        for participant in valid_participants:
+            try:
+                distance = participant['region'].distance(boundary_point)
+            except Exception:
+                continue
+
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_participant = participant
+
+        return best_participant
+
+    def finalize_segment(end_distance: float):
+        nonlocal current_label, current_participant, current_start
+        if current_label is None or current_participant is None:
+            return
+
+        segment_length = end_distance - current_start
+        if segment_length <= FASCADE_MIN_SEGMENT_LENGTH:
+            return
+
+        coords = sample_polyline(current_start, end_distance)
+        if len(coords) < 2:
+            return
+
+        segments.append({
+            'label': current_label,
+            'type': current_participant.get('type'),
+            'column_index': current_participant.get('column_index'),
+            'wall_index': current_participant.get('wall_index'),
+            'length': segment_length,
+            'start_distance': current_start,
+            'end_distance': end_distance,
+            'polyline_points': coords,
+        })
+
+    while traversed < perimeter - 1e-8:
+        next_distance = min(traversed + step, perimeter)
+        segment_length = next_distance - traversed
+        midpoint = traversed + segment_length / 2.0
+
+        try:
+            boundary_point = boundary_line.interpolate(midpoint, normalized=False)
+        except Exception:
+            traversed = next_distance
+            continue
+
+        participant = choose_participant(boundary_point)
+        if participant is not None:
+            label = participant['label']
+            length_map[label] = length_map.get(label, 0.0) + segment_length
+            max_distance_seen = max(
+                max_distance_seen,
+                _participant_distance_to_point(participant.get('geom'), boundary_point),
+            )
+
+            if current_label != label:
+                finalize_segment(traversed)
+                current_label = label
+                current_participant = participant
+                current_start = traversed
+        else:
+            finalize_segment(traversed)
+            current_label = None
+            current_participant = None
+
+        traversed = next_distance
+
+    finalize_segment(perimeter)
+
+    segments.sort(key=lambda item: (
+        min(item.get('start_distance', 0.0), item.get('end_distance', 0.0)),
+        item.get('label') or '',
+    ))
+    assigned_total = sum(length_map.values())
+    coverage_ratio = (assigned_total / perimeter) if perimeter > 1e-9 else 0.0
+    participant_count = len(length_map)
+
+    return {
+        'length_map': length_map,
+        'segments': segments,
+        'perimeter': perimeter,
+        'assigned_total': assigned_total,
+        'coverage_ratio': coverage_ratio,
+        'threshold_used': distance_threshold,
+        'candidate_count': participant_count,
+        'max_distance_seen': max_distance_seen,
+        'assignment_method': 'voronoi_edge',
+    }
+
+
+def _participant_distance_to_point(geom, point) -> float:
+    if geom is None:
+        return 0.0
+    try:
+        return geom.distance(point)
+    except Exception:
+        return 0.0
+
+
+def _assign_by_boundary_sampling(
+    floor_plan: Dict,
+    boundary_line: LineString,
+    perimeter: float,
+    distance_threshold: float,
+    sample_spacing: float,
+    max_distance: float,
+    distance_step: float,
+) -> Dict:
     column_points = floor_plan.get('column_points', [])
     column_labels = floor_plan.get('column_labels', [])
     walls = floor_plan.get('walls', [])
@@ -219,6 +421,7 @@ def compute_fascade_assignments(
             'threshold_used': threshold,
             'candidate_count': len(candidates),
             'max_distance_seen': max_distance_seen,
+            'assignment_method': 'nearest_boundary_sample',
         }
 
     # No candidates even at max distance
@@ -235,4 +438,5 @@ def _empty_result(threshold: float, perimeter: float) -> Dict:
         'threshold_used': threshold,
         'candidate_count': 0,
         'max_distance_seen': 0.0,
+        'assignment_method': 'none',
     }

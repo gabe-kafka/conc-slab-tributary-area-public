@@ -704,37 +704,37 @@ for floor_plan in floor_plans:
     if low_confidence_points:
         print(f"  Low-confidence label matches (>10 ft): {len(low_confidence_points)}")
 
-# --- Facade (Perimeter) Attribution ---
-print("\n=== Facade Length Attribution ===")
-for floor_plan in floor_plans:
-    floor_idx = floor_plan['index']
-    boundary_id = floor_plan['boundary_id']
-    try:
-        fascade_result = compute_fascade_assignments(
-            floor_plan,
-            distance_threshold=FASCADE_DISTANCE_THRESHOLD,
-            sample_spacing=FASCADE_SAMPLE_SPACING,
-        )
-        floor_plan['fascade_data'] = fascade_result
-
-        perimeter = fascade_result.get('perimeter', 0.0)
-        assigned = fascade_result.get('assigned_total', 0.0)
-        coverage_pct = fascade_result.get('coverage_ratio', 0.0) * 100.0
-        threshold_used = fascade_result.get('threshold_used', FASCADE_DISTANCE_THRESHOLD)
-        max_gap = fascade_result.get('max_distance_seen', 0.0)
-        candidates = fascade_result.get('candidate_count', 0)
-
-        if candidates == 0:
-            print(f"Floor {floor_idx} ({boundary_id}): No façade participants found within {threshold_used:.1f} ft.")
-        else:
-            print(
-                f"Floor {floor_idx} ({boundary_id}): {assigned:.1f} ft / {perimeter:.1f} ft "
-                f"(coverage {coverage_pct:.1f}%, threshold {threshold_used:.1f} ft, max gap {max_gap:.1f} ft, "
-                f"{candidates} participant(s))"
+def assign_fascade_lengths(floor_plans):
+    print("\n=== Facade Length Attribution ===")
+    for floor_plan in floor_plans:
+        floor_idx = floor_plan['index']
+        boundary_id = floor_plan['boundary_id']
+        try:
+            fascade_result = compute_fascade_assignments(
+                floor_plan,
+                distance_threshold=FASCADE_DISTANCE_THRESHOLD,
+                sample_spacing=FASCADE_SAMPLE_SPACING,
             )
-    except Exception as exc:
-        floor_plan['fascade_data'] = None
-        print(f"Floor {floor_idx} ({boundary_id}): Facade attribution failed: {exc}")
+            floor_plan['fascade_data'] = fascade_result
+
+            perimeter = fascade_result.get('perimeter', 0.0)
+            assigned = fascade_result.get('assigned_total', 0.0)
+            coverage_pct = fascade_result.get('coverage_ratio', 0.0) * 100.0
+            max_gap = fascade_result.get('max_distance_seen', 0.0)
+            candidates = fascade_result.get('candidate_count', 0)
+            method = fascade_result.get('assignment_method', 'nearest_boundary_sample')
+
+            if candidates == 0:
+                print(f"Floor {floor_idx} ({boundary_id}): No façade participants found by {method}.")
+            else:
+                print(
+                    f"Floor {floor_idx} ({boundary_id}): {assigned:.1f} ft / {perimeter:.1f} ft "
+                    f"(coverage {coverage_pct:.1f}%, method {method}, max gap {max_gap:.1f} ft, "
+                    f"{candidates} participant(s))"
+                )
+        except Exception as exc:
+            floor_plan['fascade_data'] = None
+            print(f"Floor {floor_idx} ({boundary_id}): Facade attribution failed: {exc}")
 
 # --- Define half-plane polygon function (used for tributary calculation) ---
 def half_plane_polygon(P, Q, bbox):
@@ -814,6 +814,8 @@ for floor_plan, solve_result in zip(floor_plans, ordered_results):
         wall_result = wall_results.get(wall_data['wall_index'], {'merged_region': None, 'total_area': 0.0})
         wall_data['merged_region'] = wall_result['merged_region']
         wall_data['total_area'] = wall_result['total_area']
+
+assign_fascade_lengths(floor_plans)
 
 # --- Set up DXF output infrastructure ---
 # Create new DXF document with R2010 format
@@ -1218,7 +1220,7 @@ for floor_plan in floor_plans:
                     offset_y = midpoint.y
 
                 text_point = (offset_x * OUTPUT_SCALE, offset_y * OUTPUT_SCALE)
-                length_text = f"{seg_length_ft:.0f} FT"
+                length_text = f"{math.ceil(seg_length_ft):.0f} FT"
 
                 length_entity = msp.add_text(length_text)
                 length_entity.dxf.layer = segment_poly.dxf.layer

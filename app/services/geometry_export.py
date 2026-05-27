@@ -63,7 +63,7 @@ def _serialize_column(
         "tributary_region": _serialize_geometry(region),
         "area_sf": round(area, 2),
         "area_sf_ceil": math.ceil(area) if area > 0 else 0,
-        "facade_length_ft": round(facade_length_map.get(label, 0.0), 2),
+        "facade_length_ft": math.ceil(facade_length_map.get(label, 0.0)),
     }
 
 
@@ -86,7 +86,7 @@ def _serialize_facade_segments(fascade_data: Optional[Dict]) -> List[Dict]:
         segments.append({
             "label": seg.get("label"),
             "type": seg.get("type"),
-            "length_ft": round(seg.get("length", 0.0), 2),
+            "length_ft": math.ceil(seg.get("length", 0.0)),
             "polyline": [[round(x, COORD_PRECISION), round(y, COORD_PRECISION)] for x, y in coords],
         })
     return segments

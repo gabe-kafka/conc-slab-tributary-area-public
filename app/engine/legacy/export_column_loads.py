@@ -220,6 +220,7 @@ def collect_fascade_length_data(
     floor_thresholds = {}
     floor_coverages = {}
     floor_max_distances = {}
+    floor_methods = {}
     
     for floor_plan in floor_plans:
         floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
@@ -239,6 +240,7 @@ def collect_fascade_length_data(
         floor_thresholds[floor_id] = result.get('threshold_used', distance_threshold)
         floor_coverages[floor_id] = result.get('coverage_ratio', 0.0)
         floor_max_distances[floor_id] = result.get('max_distance_seen', 0.0)
+        floor_methods[floor_id] = result.get('assignment_method', 'nearest_boundary_sample')
         
         if floor_id not in floor_data:
             floor_data[floor_id] = {}
@@ -253,6 +255,7 @@ def collect_fascade_length_data(
     floor_thresholds = expand_floor_scalar_map(floor_thresholds)
     floor_coverages = expand_floor_scalar_map(floor_coverages)
     floor_max_distances = expand_floor_scalar_map(floor_max_distances)
+    floor_methods = expand_floor_scalar_map(floor_methods)
 
     sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
     sorted_labels = sorted(list(all_labels), key=alphanumeric_sort_key)
@@ -272,6 +275,7 @@ def collect_fascade_length_data(
         'thresholds': floor_thresholds,
         'coverage': floor_coverages,
         'max_distances': floor_max_distances,
+        'methods': floor_methods,
     }
 
 
@@ -363,6 +367,7 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
         fascade_thresholds = fascade_data.get('thresholds', {})
         fascade_coverage = fascade_data.get('coverage', {})
         fascade_max_distances = fascade_data.get('max_distances', {})
+        fascade_methods = fascade_data.get('methods', {})
         
         fascade_sheet = workbook.create_sheet(title="FASCADE LENGTH")
         fascade_header = ["Floor"] + fascade_labels + ["TOTAL ASSIGNED (FT)", "PERIMETER (FT)"]
@@ -430,11 +435,13 @@ def export_column_load_takedown(floor_plans, output_filename="column_load_takedo
             threshold_used = fascade_thresholds.get(floor_id, FASCADE_DISTANCE_THRESHOLD)
             coverage_ratio = fascade_coverage.get(floor_id, 0.0)
             max_distance_seen = fascade_max_distances.get(floor_id, 0.0)
+            method = fascade_methods.get(floor_id, 'nearest_boundary_sample')
             coverage_pct = coverage_ratio * 100.0
             if perimeter_ft > 1e-6:
                 print(
                     f"  {floor_id}: {assigned_ft:.1f} ft assigned / {perimeter_ft:.1f} ft perimeter "
-                    f"({coverage_pct:.1f}% coverage, threshold {threshold_used:.1f} ft, max gap {max_distance_seen:.1f} ft)"
+                    f"({coverage_pct:.1f}% coverage, method {method}, threshold {threshold_used:.1f} ft, "
+                    f"max gap {max_distance_seen:.1f} ft)"
                 )
             else:
                 print(f"  {floor_id}: no perimeter detected (threshold {threshold_used:.1f} ft)")

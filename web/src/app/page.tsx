@@ -6,9 +6,9 @@ import { type DemoId, uploadDemo, uploadDxf } from "@/lib/api";
 import type { DraftData } from "@/lib/types";
 
 const DEMO_OPTIONS: { id: DemoId; label: string; filename: string }[] = [
-  { id: "default", label: "Load 358 Demo 1", filename: "358 Flatbush - input.dxf" },
-  { id: "geom_clean_1", label: "Load 1025 Demo 2", filename: "1025 Atlantic - input.dxf" },
-  { id: "fulton_356", label: "Load 356 Demo 3", filename: "356 Fulton - input.dxf" },
+  { id: "default", label: "Load 358 Demo 1 (archived)", filename: "358 Flatbush - input.dxf" },
+  { id: "geom_clean_1", label: "Load 1025 Demo 2 (archived)", filename: "1025 Atlantic - input.dxf" },
+  { id: "fulton_356", label: "Load 356 Demo 3 (best reference)", filename: "356 Fulton - input.dxf" },
 ];
 
 function UploadPageInner() {
@@ -150,10 +150,10 @@ function UploadPageInner() {
 
         <a
           href="/template.dxf"
-          download="template.dxf"
+          download="reference.dxf"
           className="block w-full py-2 px-4 border border-border-panel text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors text-center text-[12px]"
         >
-          Download Template DXF
+          Download Reference DXF
         </a>
       </div>
     </div>

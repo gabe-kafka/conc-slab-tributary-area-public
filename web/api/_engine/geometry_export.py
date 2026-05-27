@@ -75,7 +75,7 @@ def _serialize_column(
             floor_plan.get("column_load_areas", []),
             col_idx,
         ),
-        "facade_length_ft": round(facade_length_map.get(label, 0.0), 2),
+        "facade_length_ft": math.ceil(facade_length_map.get(label, 0.0)),
         "ends_here": end_key in ending_keys,
     }
 
@@ -147,7 +147,7 @@ def _serialize_facade_segments(fascade_data: Optional[Dict]) -> List[Dict]:
         segments.append({
             "label": seg.get("label"),
             "type": seg.get("type"),
-            "length_ft": round(seg.get("length", 0.0), 2),
+            "length_ft": math.ceil(seg.get("length", 0.0)),
             "polyline": [[round(x, COORD_PRECISION), round(y, COORD_PRECISION)] for x, y in coords],
         })
     return segments
