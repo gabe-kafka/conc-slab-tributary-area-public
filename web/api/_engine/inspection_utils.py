@@ -21,6 +21,16 @@ TEXT_TYPES = {"TEXT", "MTEXT"}
 
 ROLE_KEYWORDS = {
     "boundary": ["boundary", "slab", "outline", "perimeter", "deck", "edge"],
+    "additional_load": [
+        "additional-load",
+        "additional load",
+        "additional",
+        "load",
+        "roof",
+        "bulkhead",
+        "terrace",
+        "balcony",
+    ],
     "wall": ["wall", "shear", "core"],
     "beam": ["transfer beam", "beam transfer", "beam", "beams", "girder", "transfer"],
     "support_point": [
@@ -179,6 +189,11 @@ def _request_ai_layer_suggestions(
                                 "Slab/load boundary closed regions. Multiple layers are valid "
                                 "when they represent adjacent loading zones. Exclude column footprints."
                             ),
+                            "additional_load": (
+                                "Secondary slab/load regions such as roof, bulkhead, terrace, "
+                                "balcony, or layers explicitly named additional load. These are "
+                                "closed load-bearing regions, not walls, columns, beams, or labels."
+                            ),
                             "wall": (
                                 "Wall or shear/core support linework. Do not include slab/load "
                                 "boundaries, beam layers, or column footprint layers."
@@ -289,12 +304,20 @@ def _sanitize_ai_suggestions(
         sanitized[role] = deduped[:5]
 
     boundary_layers = set(sanitized.get("boundary", []))
+    additional_load_layers = set(sanitized.get("additional_load", [])) - boundary_layers
+    sanitized["additional_load"] = [
+        layer
+        for layer in sanitized.get("additional_load", [])
+        if layer in additional_load_layers
+    ]
+    additional_load_layers = set(sanitized.get("additional_load", []))
     support_layers = set(sanitized.get("support_point", []))
     beam_layers = set(sanitized.get("beam", []))
     sanitized["wall"] = [
         layer
         for layer in sanitized.get("wall", [])
         if layer not in boundary_layers
+        and layer not in additional_load_layers
         and layer not in support_layers
         and layer not in beam_layers
     ]
@@ -303,9 +326,11 @@ def _sanitize_ai_suggestions(
         layer
         for layer in sanitized.get("beam", [])
         if layer not in boundary_layers
+        and layer not in additional_load_layers
         and layer not in support_layers
         and layer not in wall_layers
     ]
+    _deconflict_datum_suggestions(sanitized)
     _deconflict_label_suggestions(sanitized, layer_counts)
     return sanitized
 
@@ -346,12 +371,24 @@ def suggest_layers(layer_counts: Dict[str, Dict[str, int]]) -> Dict[str, List[st
     # layer is selected as a boundary candidate, do not also preselect it as a
     # wall support layer; users can still opt into a wall layer manually.
     boundary_layers = set(suggestions.get("boundary", []))
+    additional_load_layers = set(suggestions.get("additional_load", [])) - boundary_layers
+    suggestions["additional_load"] = [
+        layer
+        for layer in suggestions.get("additional_load", [])
+        if layer in additional_load_layers
+    ]
+    additional_load_layers = set(suggestions.get("additional_load", []))
     support_layers = set(suggestions.get("support_point", []))
     beam_layers = set(suggestions.get("beam", []))
     if boundary_layers:
         suggestions["wall"] = [
             layer for layer in suggestions.get("wall", [])
             if layer not in boundary_layers
+        ]
+    if additional_load_layers:
+        suggestions["wall"] = [
+            layer for layer in suggestions.get("wall", [])
+            if layer not in additional_load_layers
         ]
     if support_layers:
         suggestions["wall"] = [
@@ -369,10 +406,25 @@ def suggest_layers(layer_counts: Dict[str, Dict[str, int]]) -> Dict[str, List[st
             layer for layer in suggestions.get("beam", [])
             if layer not in wall_layers
             and layer not in boundary_layers
+            and layer not in additional_load_layers
             and layer not in support_layers
         ]
+    _deconflict_datum_suggestions(suggestions)
     _deconflict_label_suggestions(suggestions, layer_counts)
     return suggestions
+
+
+def _deconflict_datum_suggestions(suggestions: Dict[str, List[str]]) -> None:
+    """Datum points align floors; they are not structural supports."""
+    datum_layers = set(suggestions.get("datum", []))
+    if not datum_layers:
+        return
+
+    suggestions["support_point"] = [
+        layer
+        for layer in suggestions.get("support_point", [])
+        if layer not in datum_layers
+    ]
 
 
 def _deconflict_label_suggestions(
@@ -428,6 +480,14 @@ def _score_layer(role: str, layer: str, counts: Dict[str, int], keywords: List[s
 
     if role == "boundary" and has_geometry:
         score += 3
+    if role == "additional_load":
+        has_additional_name = any(keyword in value for keyword in keywords)
+        if has_additional_name and has_geometry:
+            score += 6
+        if counts.get("POINT", 0):
+            score -= 8
+        if has_text and not has_geometry:
+            score -= 8
     if role == "wall" and any(kind in counts for kind in {"LINE", "LWPOLYLINE", "POLYLINE"}):
         score += 3
     if role == "beam":

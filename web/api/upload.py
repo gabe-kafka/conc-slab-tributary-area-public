@@ -12,6 +12,7 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 # Add engine directory to Python path
 ENGINE_DIR = str(Path(__file__).parent / "_engine")
@@ -34,6 +35,10 @@ DEMO_FILES = {
     "fulton_356": {
         "path": DEMO_DIR / "356_fulton.dxf",
         "filename": "356 Fulton - input.dxf",
+    },
+    "franklin_246": {
+        "path": DEMO_DIR / "246_franklin.dxf",
+        "filename": "246 Franklin - input.dxf",
     },
 }
 
@@ -94,20 +99,23 @@ class handler(BaseHTTPRequestHandler):
 
     def _parse_json_demo(self) -> tuple[bytes, str]:
         """Handle demo request: read bundled demo DXF."""
+        query = parse_qs(urlparse(self.path).query)
+        query_demo_id = query.get("demo_id", [None])[0]
+
         content_length = int(self.headers.get("Content-Length", 0))
+        body = {}
         if content_length > 0:
             raw = self.rfile.read(content_length)
             # Vercel runtime may return str or bytes
             if isinstance(raw, str):
                 raw = raw.encode("utf-8")
-            body = json.loads(raw)
-        else:
-            body = {}
+            if raw:
+                body = json.loads(raw)
 
-        if not body.get("demo"):
+        if not body.get("demo") and query_demo_id is None:
             raise ValueError("JSON body must contain {\"demo\": true}")
 
-        demo_id = str(body.get("demo_id") or "default")
+        demo_id = str(query_demo_id or body.get("demo_id") or "default")
         demo = DEMO_FILES.get(demo_id)
         if demo is None:
             choices = ", ".join(sorted(DEMO_FILES))

@@ -156,6 +156,9 @@ export default function TributaryCanvas({
   const alignmentOriginsByKey = useMemo(() => {
     const origins = new Map(autoAlignmentOriginsByKey);
     for (const floor of floors) {
+      if (floor.alignment_datum) {
+        origins.set(floorSourceKey(floor), floor.alignment_datum);
+      }
       const manualDatum = datumPoints[floor.floor_id];
       if (manualDatum) {
         origins.set(floorSourceKey(floor), manualDatum);

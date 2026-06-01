@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import TributaryCanvas from "./canvas/TributaryCanvas";
 import {
   expandedPhysicalFloorCount,
@@ -55,18 +55,11 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
   const [datumPoints, setDatumPoints] = useState<DatumPoints>({});
   const [datumEditFloorId, setDatumEditFloorId] = useState<string | null>(null);
 
-  // Apply mode-specific element-toggle defaults whenever the view mode
-  // changes. Iso defaults: tributaries off, walls off (so you can see
-  // the column stack cleanly through the building); plan defaults: both on.
-  useEffect(() => {
-    if (viewMode === "iso") {
-      setShowTributaries(false);
-      setShowWalls(false);
-    } else {
-      setShowTributaries(true);
-      setShowWalls(true);
-    }
-  }, [viewMode]);
+  const applyViewMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    setShowTributaries(mode === "plan");
+    setShowWalls(mode === "plan");
+  }, []);
   const physicalFloorCount = useMemo(
     () => expandedPhysicalFloorCount(geometry.floors),
     [geometry.floors],
@@ -114,7 +107,7 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
   }, []);
 
   const handleStartDatumPick = useCallback((floorId: string) => {
-    setViewMode("plan");
+    applyViewMode("plan");
     setVisibleFloors((prev) => {
       if (prev.has(floorId)) return prev;
       const next = new Set(prev);
@@ -122,7 +115,7 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
       return next;
     });
     setDatumEditFloorId((prev) => (prev === floorId ? null : floorId));
-  }, []);
+  }, [applyViewMode]);
 
   const handleSetDatum = useCallback((floorId: string, point: [number, number]) => {
     setDatumPoints((prev) => ({ ...prev, [floorId]: point }));
@@ -233,7 +226,7 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
     [geometry.floors],
   );
   const datumCount = geometry.floors.filter(
-    (floor) => datumPoints[floor.floor_id],
+    (floor) => datumPoints[floor.floor_id] || floor.alignment_datum,
   ).length;
 
   return (
@@ -346,7 +339,7 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
                 key={mode.value}
                 type="button"
                 onClick={() => {
-                  setViewMode(mode.value as ViewMode);
+                  applyViewMode(mode.value as ViewMode);
                   setDatumEditFloorId(null);
                 }}
                 className={`w-10 text-[10px] uppercase tracking-wider transition-colors ${
@@ -395,7 +388,7 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
           </div>
           {floorPlanItems.map(({ floor, representedFloors }) => {
             const active = visibleFloors.has(floor.floor_id);
-            const hasDatum = Boolean(datumPoints[floor.floor_id]);
+            const hasDatum = Boolean(datumPoints[floor.floor_id] || floor.alignment_datum);
             const pickingDatum = datumEditFloorId === floor.floor_id;
             return (
               <div

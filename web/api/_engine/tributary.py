@@ -1479,10 +1479,14 @@ if user_datum_points:
         slab = fp.get('slab_polygon')
         if slab is None or slab.is_empty:
             continue
-        for dp in user_datum_points:
-            if slab.covers(dp):
-                fp['user_datum'] = (dp.x, dp.y)
-                break
+        matching_datums = [
+            dp
+            for dp in user_datum_points
+            if slab.covers(dp) or slab.distance(dp) <= EDGE_TOLERANCE_FEET
+        ]
+        if matching_datums:
+            dp = min(matching_datums, key=lambda point: slab.distance(point))
+            fp['user_datum'] = (dp.x, dp.y)
 
 # --- Compute alignment datums once, attach to each floor_plan ---
 _floor_datums = compute_floor_datums(floor_plans)
