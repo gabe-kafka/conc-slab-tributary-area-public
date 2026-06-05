@@ -2,8 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { processJob } from "@/lib/api";
-import type { ProcessResult } from "@/lib/types";
+import { processJob, saveProject } from "@/lib/api";
+import type {
+  LayerMapping,
+  ProcessResult,
+  ViewMode,
+} from "@/lib/types";
 import dynamic from "next/dynamic";
 
 const ResultsView = dynamic(() => import("@/components/ResultsView"), {
@@ -15,14 +19,59 @@ const ResultsView = dynamic(() => import("@/components/ResultsView"), {
   ),
 });
 
+interface ProcessParams {
+  blob_url: string;
+  source_units: string;
+  layer_mapping: LayerMapping;
+  view_mode?: ViewMode;
+  dxf_filename?: string;
+  dxf_size_bytes?: number | null;
+}
+
+interface OpenedProject {
+  id: string;
+  name: string;
+  result: ProcessResult;
+  view_mode: ViewMode;
+  dxf_filename: string;
+}
+
+interface SourceState {
+  blob_url: string;
+  source_units: string;
+  layer_mapping: LayerMapping;
+  dxf_filename: string;
+  dxf_size_bytes: number | null;
+}
+
 function JobPageInner() {
   const router = useRouter();
   const [result, setResult] = useState<ProcessResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(true);
+  const [initialViewMode, setInitialViewMode] = useState<ViewMode>("plan");
+  const [source, setSource] = useState<SourceState | null>(null);
+  const [openedProjectId, setOpenedProjectId] = useState<string | null>(null);
   const called = useRef(false);
 
   const run = useCallback(async () => {
+    // Opening a previously-saved project: skip /api/process.
+    const openedRaw = sessionStorage.getItem("openedProject");
+    if (openedRaw) {
+      try {
+        const opened = JSON.parse(openedRaw) as OpenedProject;
+        setOpenedProjectId(opened.id);
+        setInitialViewMode(opened.view_mode === "iso" ? "iso" : "plan");
+        setResult(opened.result);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to open project.");
+      } finally {
+        setProcessing(false);
+        sessionStorage.removeItem("openedProject");
+      }
+      return;
+    }
+
     const raw = sessionStorage.getItem("processParams");
     if (!raw) {
       router.replace("/");
@@ -30,7 +79,15 @@ function JobPageInner() {
     }
 
     try {
-      const params = JSON.parse(raw);
+      const params = JSON.parse(raw) as ProcessParams;
+      setInitialViewMode(params.view_mode === "iso" ? "iso" : "plan");
+      setSource({
+        blob_url: params.blob_url,
+        source_units: params.source_units,
+        layer_mapping: params.layer_mapping,
+        dxf_filename: params.dxf_filename ?? "untitled.dxf",
+        dxf_size_bytes: params.dxf_size_bytes ?? null,
+      });
       const res = await processJob(
         params.blob_url,
         params.source_units,
@@ -51,9 +108,40 @@ function JobPageInner() {
     run();
   }, [run]);
 
+  const canSave =
+    !openedProjectId &&
+    !!source &&
+    !!result &&
+    result.status !== "failed";
+
   // Show results view once geometry is available
   if (result?.status === "completed" && result.geometry) {
-    return <ResultsView result={result} geometry={result.geometry} />;
+    return (
+      <div className="relative flex-1 flex flex-col">
+        <ResultsView
+          result={result}
+          geometry={result.geometry}
+          initialViewMode={initialViewMode}
+        />
+        {canSave && source && (
+          <div className="absolute top-3 right-3 z-10">
+            <SaveProjectButton
+              defaultName={source.dxf_filename}
+              payload={() => ({
+                name: source.dxf_filename,
+                dxf_blob_url: source.blob_url,
+                dxf_filename: source.dxf_filename,
+                dxf_size_bytes: source.dxf_size_bytes,
+                source_units: source.source_units,
+                layer_mapping: source.layer_mapping,
+                result,
+                view_mode: initialViewMode,
+              })}
+            />
+          </div>
+        )}
+      </div>
+    );
   }
 
   // Processing / error view
@@ -138,7 +226,7 @@ function JobPageInner() {
 
         {/* Download buttons (fallback if geometry failed to load) */}
         {result?.status === "completed" && !result.geometry && (
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3 items-center">
             {result.artifacts.dxf_url && (
               <a
                 href={`/api/download?url=${encodeURIComponent(result.artifacts.dxf_url)}`}
@@ -154,6 +242,21 @@ function JobPageInner() {
               >
                 Download XLSX
               </a>
+            )}
+            {canSave && source && (
+              <SaveProjectButton
+                defaultName={source.dxf_filename}
+                payload={() => ({
+                  name: source.dxf_filename,
+                  dxf_blob_url: source.blob_url,
+                  dxf_filename: source.dxf_filename,
+                  dxf_size_bytes: source.dxf_size_bytes,
+                  source_units: source.source_units,
+                  layer_mapping: source.layer_mapping,
+                  result,
+                  view_mode: initialViewMode,
+                })}
+              />
             )}
           </div>
         )}
@@ -195,5 +298,58 @@ function StatusChip({ status }: { status: string }) {
     >
       {status}
     </span>
+  );
+}
+
+type SavePayload = Parameters<typeof saveProject>[0];
+
+interface SaveProjectButtonProps {
+  defaultName: string;
+  payload: () => SavePayload;
+}
+
+function SaveProjectButton({ defaultName, payload }: SaveProjectButtonProps) {
+  const router = useRouter();
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onClick = useCallback(async () => {
+    const name = prompt("Save project as:", defaultName);
+    if (!name) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const body = payload();
+      await saveProject({ ...body, name });
+      setSaved(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Save failed.";
+      if (msg.startsWith("401")) {
+        router.push("/sign-in");
+        return;
+      }
+      setError(msg);
+    } finally {
+      setSaving(false);
+    }
+  }, [defaultName, payload, router]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={saving || saved}
+        className="px-3 py-1.5 text-[12px] bg-accent text-white hover:bg-accent-hover transition-colors disabled:opacity-60"
+      >
+        {saved ? "Saved" : saving ? "Saving…" : "Save Project"}
+      </button>
+      {error && (
+        <span className="text-error text-[11px]" title={error}>
+          {error.length > 40 ? `${error.slice(0, 40)}…` : error}
+        </span>
+      )}
+    </div>
   );
 }

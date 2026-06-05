@@ -14,10 +14,10 @@ import type {
   GeoJsonPolygon,
   GeometryPayload,
   ProcessResult,
+  ViewMode,
   WallData,
 } from "@/lib/types";
 
-type ViewMode = "plan" | "iso";
 type DatumPoints = Record<string, [number, number]>;
 type SelectedColumn = {
   floorId: string;
@@ -33,9 +33,15 @@ type SelectedWall = {
 interface ResultsViewProps {
   result: ProcessResult;
   geometry: GeometryPayload;
+  initialViewMode?: ViewMode;
 }
 
-export default function ResultsView({ result, geometry }: ResultsViewProps) {
+export default function ResultsView({
+  result,
+  geometry,
+  initialViewMode = "plan",
+}: ResultsViewProps) {
+  const initialIsoMode = initialViewMode === "iso";
   const [visibleFloors, setVisibleFloors] = useState<Set<string>>(
     () => new Set(geometry.floors.map((f) => f.floor_id)),
   );
@@ -44,14 +50,14 @@ export default function ResultsView({ result, geometry }: ResultsViewProps) {
   const [selectedWall, setSelectedWall] = useState<SelectedWall | null>(null);
   const [hoveredColumn, setHoveredColumn] =
     useState<SelectedColumn | null>(null);
-  const [showTributaries, setShowTributaries] = useState(true);
+  const [showTributaries, setShowTributaries] = useState(!initialIsoMode);
   const [highlightUnlabeled, setHighlightUnlabeled] = useState(false);
   const [showSlabDebug, setShowSlabDebug] = useState(false);
   const [showSlabs, setShowSlabs] = useState(true);
-  const [showWalls, setShowWalls] = useState(true);
+  const [showWalls, setShowWalls] = useState(!initialIsoMode);
   const [showColumns, setShowColumns] = useState(true);
   const [showBeams, setShowBeams] = useState(true);
-  const [viewMode, setViewMode] = useState<ViewMode>("plan");
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
   const [datumPoints, setDatumPoints] = useState<DatumPoints>({});
   const [datumEditFloorId, setDatumEditFloorId] = useState<string | null>(null);
 

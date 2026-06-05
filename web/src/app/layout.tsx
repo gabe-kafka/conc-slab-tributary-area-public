@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { JetBrains_Mono } from "next/font/google";
+import { AuthControls } from "@/components/AuthControls";
 import "./globals.css";
 
 const mono = JetBrains_Mono({
@@ -23,13 +25,19 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col font-mono">
         <header className="h-8 flex items-center justify-between px-3 border-b border-border-panel bg-bg-surface text-text-secondary text-[11px]">
           <div className="flex items-center gap-3">
-            <span className="text-accent font-semibold tracking-wide uppercase">
+            <Link
+              href="/?upload=1"
+              className="text-accent font-semibold tracking-wide uppercase hover:text-accent-hover transition-colors"
+            >
               Tributary
-            </span>
+            </Link>
             <span className="text-text-muted">/</span>
             <span>Concrete Slab</span>
           </div>
-          <StatusClock />
+          <div className="flex items-center gap-3">
+            <AuthControls />
+            <StatusClock />
+          </div>
         </header>
         <main className="flex-1 flex flex-col">{children}</main>
       </body>

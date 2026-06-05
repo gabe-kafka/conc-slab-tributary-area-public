@@ -27,6 +27,26 @@ export interface LayerMapping {
   datum: string[];
 }
 
+export type ViewMode = "plan" | "iso";
+
+// --- Saved projects ---
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  dxf_filename: string;
+  dxf_size_bytes: number | null;
+  updated_at: string;
+}
+
+export interface ProjectRecord extends ProjectSummary {
+  dxf_blob_url: string;
+  source_units: string;
+  layer_mapping: LayerMapping;
+  result: ProcessResult;
+  view_mode: ViewMode;
+}
+
 // --- Process Result ---
 
 export interface ProcessResult {

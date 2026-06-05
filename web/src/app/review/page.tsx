@@ -2,6 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  EMPTY_LAYER_MAPPING,
+  layerMappingFromDraft,
+} from "@/lib/layerMapping";
 import type { DraftData, LayerMapping } from "@/lib/types";
 
 const ROLES = [
@@ -15,17 +19,6 @@ const ROLES = [
   { key: "datum", label: "Datum", required: false },
 ] as const;
 
-const EMPTY_MAPPING: LayerMapping = {
-  boundary: [],
-  additional_load: [],
-  wall: [],
-  beam: [],
-  support_point: [],
-  column_label: [],
-  floor_label: [],
-  datum: [],
-};
-
 function readDraftFromSession(): DraftData | null {
   if (typeof window === "undefined") return null;
   const raw = sessionStorage.getItem("draft");
@@ -33,17 +26,7 @@ function readDraftFromSession(): DraftData | null {
 }
 
 function mappingFromDraft(draft: DraftData | null): LayerMapping {
-  if (!draft) return EMPTY_MAPPING;
-  return {
-    boundary: draft.suggestions.boundary || [],
-    additional_load: draft.suggestions.additional_load || [],
-    wall: draft.suggestions.wall || [],
-    beam: draft.suggestions.beam || [],
-    support_point: draft.suggestions.support_point || [],
-    column_label: draft.suggestions.column_label || [],
-    floor_label: draft.suggestions.floor_label || [],
-    datum: draft.suggestions.datum || [],
-  };
+  return draft ? layerMappingFromDraft(draft) : EMPTY_LAYER_MAPPING;
 }
 
 const SLAB_ROLES: ReadonlyArray<keyof LayerMapping> = ["boundary", "additional_load"];
@@ -57,7 +40,7 @@ function entitySummary(counts: { [type: string]: number }): string {
 export default function ReviewPage() {
   const router = useRouter();
   const [draft, setDraft] = useState<DraftData | null>(null);
-  const [mapping, setMapping] = useState<LayerMapping>(EMPTY_MAPPING);
+  const [mapping, setMapping] = useState<LayerMapping>(EMPTY_LAYER_MAPPING);
   const [units, setUnits] = useState("in");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,6 +112,8 @@ export default function ReviewPage() {
         blob_url: draft.blob_url,
         source_units: units,
         layer_mapping: mapping,
+        dxf_filename: draft.filename,
+        dxf_size_bytes: null,
       }),
     );
     router.push("/job");
