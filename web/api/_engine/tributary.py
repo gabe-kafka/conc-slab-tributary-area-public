@@ -5,6 +5,7 @@ import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
+from shapely.affinity import translate
 from shapely.geometry import Polygon, Point, LineString
 from shapely.ops import polygonize, unary_union
 import ezdxf
@@ -37,6 +38,7 @@ class NeedsReviewError(RuntimeError):
 AREA_TOLERANCE_SF = 1e-4
 DISPLAY_LINEWORK_TYPES = {"LINE", "LWPOLYLINE", "POLYLINE", "ARC", "CIRCLE"}
 BOUNDARY_CONNECT_TOLERANCE_FEET = 0.05
+PRIMARY_LOAD_LAYER = "BOUNDARY"
 
 
 def collect_display_linework_entities(modelspace, allowed_layers):
@@ -167,6 +169,133 @@ def load_zones_from_floor_plans(floor_plans_for_group):
             load_zones.append({"layer": layer, "polygon": merged})
 
     return load_zones
+
+
+def floor_plan_has_primary_boundary(floor_plan):
+    return any(
+        str(zone.get("layer") or PRIMARY_LOAD_LAYER) == PRIMARY_LOAD_LAYER
+        for zone in floor_plan.get("load_zones", [])
+    )
+
+
+def assign_user_datums_to_floor_plans(floor_plans, datum_points):
+    if not datum_points:
+        return
+
+    for fp in floor_plans:
+        slab = fp.get('slab_polygon')
+        if slab is None or slab.is_empty:
+            continue
+        matching_datums = [
+            dp
+            for dp in datum_points
+            if slab.covers(dp) or slab.distance(dp) <= EDGE_TOLERANCE_FEET
+        ]
+        if matching_datums:
+            dp = min(matching_datums, key=lambda point: slab.distance(point))
+            fp['user_datum'] = (dp.x, dp.y)
+
+
+def attach_secondary_only_floor_plans(floor_plans):
+    """Attach detached additional-load-only drawings to matching primary slabs.
+
+    Some source DXFs draft a same-floor secondary load plan as its own drawing
+    off to the side. It has a floor label and DATUM, but no primary slab layer.
+    Treating it as a floor creates an orphaned roof/bulkhead plate. When a
+    matching primary slab exists, align by DATUM and merge only the load zone.
+    """
+    primary_by_floor = {}
+    secondary_only = []
+
+    for floor_plan in floor_plans:
+        floor_number = floor_plan.get('floor_number')
+        if not floor_number:
+            continue
+
+        if floor_plan_has_primary_boundary(floor_plan):
+            primary_by_floor.setdefault(floor_number, []).append(floor_plan)
+        else:
+            secondary_only.append(floor_plan)
+
+    attached_ids = set()
+    attached_source_polygons = []
+
+    for secondary in secondary_only:
+        candidates = primary_by_floor.get(secondary.get('floor_number'), [])
+        if not candidates:
+            continue
+
+        source_datum = secondary.get('user_datum')
+        if source_datum is None:
+            print(
+                f"  WARNING: Additional-load-only floor '{secondary.get('floor_number')}' "
+                "has no DATUM; leaving it as a separate floor."
+            )
+            continue
+
+        candidates_with_datum = [
+            candidate for candidate in candidates if candidate.get('user_datum') is not None
+        ]
+        if not candidates_with_datum:
+            print(
+                f"  WARNING: Primary floor '{secondary.get('floor_number')}' has no DATUM; "
+                "leaving detached additional load as a separate floor."
+            )
+            continue
+
+        target = min(
+            candidates_with_datum,
+            key=lambda candidate: candidate['slab_polygon'].distance(
+                Point(source_datum[0], source_datum[1])
+            ),
+        )
+        target_datum = target['user_datum']
+        dx = target_datum[0] - source_datum[0]
+        dy = target_datum[1] - source_datum[1]
+
+        translated_zones = []
+        for zone in secondary.get('load_zones', []):
+            polygon = zone.get('polygon')
+            if polygon is None or polygon.is_empty:
+                continue
+            translated_zones.append(
+                {
+                    "layer": str(zone.get("layer") or PRIMARY_LOAD_LAYER),
+                    "polygon": translate(polygon, xoff=dx, yoff=dy).buffer(0),
+                }
+            )
+
+        if not translated_zones:
+            continue
+
+        target["load_zones"] = load_zones_from_floor_plans(
+            [target, {"load_zones": translated_zones}]
+        )
+        target["slab_polygon"] = unary_union(
+            [target["slab_polygon"]]
+            + [zone["polygon"] for zone in translated_zones]
+        ).buffer(0)
+
+        attached_ids.add(id(secondary))
+        attached_source_polygons.append(secondary["slab_polygon"])
+        print(
+            f"  Attached additional-load-only '{secondary.get('floor_number')}' "
+            f"to primary slab by DATUM offset ({dx:.1f}, {dy:.1f}) ft"
+        )
+
+    if not attached_ids:
+        return floor_plans, []
+
+    return (
+        [floor_plan for floor_plan in floor_plans if id(floor_plan) not in attached_ids],
+        attached_source_polygons,
+    )
+
+
+def geometry_intersects_any(geometry, polygons):
+    if geometry is None or getattr(geometry, "is_empty", True):
+        return False
+    return any(polygon.intersects(geometry) for polygon in polygons)
 
 
 def calculate_load_zone_areas(region, load_zones):
@@ -765,6 +894,17 @@ for floor_plan in floor_plans:
     floor_number = floor_plan.get('floor_number', boundary_id)
     print(f"Floor {floor_idx} (boundary_id: {boundary_id}) → Floor Number: {floor_number}")
 
+assign_user_datums_to_floor_plans(floor_plans, user_datum_points)
+
+print("\n--- Detached Additional Load Attachment ---")
+previous_floor_count = len(floor_plans)
+floor_plans, detached_additional_source_polygons = attach_secondary_only_floor_plans(floor_plans)
+attached_floor_count = previous_floor_count - len(floor_plans)
+if attached_floor_count:
+    print(f"Attached {attached_floor_count} detached additional-load floor(s)")
+else:
+    print("No detached additional-load floor plans required attachment")
+
 # Group floor plans by floor number (consolidate multiple boundaries per floor)
 print("\n--- Consolidating Floor Plans by Floor Number ---")
 floor_groups = {}
@@ -865,15 +1005,23 @@ if "footprint_id" in points_df.columns:
             raw_column_footprints[row_index] = column_footprints_by_id[footprint_id]
 
 raw_column_records = []
+ignored_detached_context_columns = []
 for row_index, row in points_df.iterrows():
     point = Point(row["x"], row["y"])
     source_type = str(row.get("source_type", "POINT") or "POINT").upper()
+    footprint = raw_column_footprints.get(row_index)
+    if (
+        geometry_intersects_any(point, detached_additional_source_polygons)
+        or geometry_intersects_any(footprint, detached_additional_source_polygons)
+    ):
+        ignored_detached_context_columns.append(row_index)
+        continue
     raw_column_records.append(
         {
             "point": point,
             "original_index": row_index,
             "source_type": source_type,
-            "footprint": raw_column_footprints.get(row_index),
+            "footprint": footprint,
         }
     )
 
@@ -897,6 +1045,12 @@ if duplicate_column_records:
     if len(duplicate_column_records) > 5:
         print(f"    ... and {len(duplicate_column_records) - 5} more duplicates merged")
 
+if ignored_detached_context_columns:
+    print(
+        f"Ignored {len(ignored_detached_context_columns)} column support(s) from detached "
+        "additional-load context"
+    )
+
 # Initialize column storage and wall data for each floor plan
 for floor_plan in floor_plans:
     floor_plan['column_points'] = []
@@ -910,9 +1064,13 @@ for floor_plan in floor_plans:
 
 # --- Assign wall entities to floor plans based on slab intersection ---
 orphaned_walls = []
+ignored_detached_context_walls = []
 
 for wall_data in wall_data_list:
     wall_line = wall_data['wall_line']
+    if geometry_intersects_any(wall_line, detached_additional_source_polygons):
+        ignored_detached_context_walls.append(wall_data['wall_index'])
+        continue
     matches = [floor_plan for floor_plan in floor_plans if line_intersects(floor_plan['slab_polygon'], wall_line)]
     if len(matches) > 1:
         raise NeedsReviewError(
@@ -933,11 +1091,21 @@ for floor_plan in floor_plans:
 if orphaned_walls:
     print(f"\nWARNING: {len(orphaned_walls)} wall(s) not contained in any floor plan: {orphaned_walls}")
 
+if ignored_detached_context_walls:
+    print(
+        f"Ignored {len(ignored_detached_context_walls)} wall(s) from detached "
+        f"additional-load context: {ignored_detached_context_walls}"
+    )
+
 # --- Assign beam display linework to floor plans based on slab intersection ---
 orphaned_beams = []
+ignored_detached_context_beams = []
 
 for beam_data in beam_data_list:
     beam_line = beam_data["beam_line"]
+    if geometry_intersects_any(beam_line, detached_additional_source_polygons):
+        ignored_detached_context_beams.append(beam_data["beam_index"])
+        continue
     matches = [
         floor_plan
         for floor_plan in floor_plans
@@ -959,6 +1127,12 @@ for floor_plan in floor_plans:
 
 if orphaned_beams:
     print(f"\nWARNING: {len(orphaned_beams)} beam segment(s) not contained in any floor plan: {orphaned_beams}")
+
+if ignored_detached_context_beams:
+    print(
+        f"Ignored {len(ignored_detached_context_beams)} beam segment(s) from detached "
+        f"additional-load context: {ignored_detached_context_beams}"
+    )
 
 # Track orphaned columns (not contained in any floor plan)
 orphaned_columns = []
