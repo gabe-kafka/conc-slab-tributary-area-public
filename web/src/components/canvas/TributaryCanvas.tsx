@@ -289,68 +289,22 @@ export default function TributaryCanvas({
         }
       }
 
-      const usedUpper = new Set<number>();
+      for (const upperWall of upper.floor.walls) {
+        const upperCoords = wallVertices(upperWall);
+        if (upperCoords.length < 2) continue;
 
-      for (const lowerWall of lower.floor.walls) {
-        const lowerCoords = wallVertices(lowerWall);
-        if (lowerCoords.length === 0) continue;
-        const lowerCentroidAligned = alignedPoint(
-          ringCentroid(lowerCoords),
-          lowerOrigin,
+        const lowerCoords = upperCoords.map((point) =>
+          translateBetweenOrigins(point as [number, number], upperOrigin, lowerOrigin),
         );
 
-        let bestUpper: { wall: typeof lowerWall; dist: number } | null = null;
-        for (const upperWall of upper.floor.walls) {
-          if (usedUpper.has(upperWall.wall_index)) continue;
-          const upperCoords = wallVertices(upperWall);
-          if (upperCoords.length === 0) continue;
-          const upperCentroidAligned = alignedPoint(
-            ringCentroid(upperCoords),
-            upperOrigin,
-          );
-          const dist = Math.hypot(
-            lowerCentroidAligned[0] - upperCentroidAligned[0],
-            lowerCentroidAligned[1] - upperCentroidAligned[1],
-          );
-          if (dist > WALL_MATCH_TOLERANCE_FT) continue;
-          if (!bestUpper || dist < bestUpper.dist) {
-            bestUpper = { wall: upperWall, dist };
-          }
-        }
-
-        if (!bestUpper) continue;
-        usedUpper.add(bestUpper.wall.wall_index);
-
-        const upperCoords = wallVertices(bestUpper.wall);
-        const matchedLower: [number, number][] = [];
-        const matchedUpper: [number, number][] = [];
-        for (const lv of lowerCoords) {
-          const lvAligned = alignedPoint(lv as [number, number], lowerOrigin);
-          let nearest: [number, number] | null = null;
-          let nearestDist = Number.POSITIVE_INFINITY;
-          for (const uv of upperCoords) {
-            const uvAligned = alignedPoint(uv as [number, number], upperOrigin);
-            const d = Math.hypot(
-              lvAligned[0] - uvAligned[0],
-              lvAligned[1] - uvAligned[1],
-            );
-            if (d < nearestDist) {
-              nearestDist = d;
-              nearest = uv as [number, number];
-            }
-          }
-          if (!nearest) continue;
-          matchedLower.push(lv as [number, number]);
-          matchedUpper.push(nearest);
-        }
-        if (matchedLower.length >= 2) {
+        if (lowerCoords.length >= 2) {
           connections.push({
             kind: "wall",
             lowerInstance: lower,
             upperInstance: upper,
-            lowerCoords: matchedLower,
-            upperCoords: matchedUpper,
-            closed: wallIsClosed(lowerWall) && wallIsClosed(bestUpper.wall),
+            lowerCoords,
+            upperCoords: upperCoords as [number, number][],
+            closed: wallIsClosed(upperWall),
           });
         }
       }
@@ -1852,14 +1806,24 @@ type VerticalConnection =
       closed: boolean;
     };
 
-const WALL_MATCH_TOLERANCE_FT = 3;
-
 function alignedPoint(
   point: [number, number],
   origin: [number, number] | undefined,
 ): [number, number] {
   if (!origin) return point;
   return [point[0] - origin[0], point[1] - origin[1]];
+}
+
+function translateBetweenOrigins(
+  point: [number, number],
+  fromOrigin: [number, number] | undefined,
+  toOrigin: [number, number] | undefined,
+): [number, number] {
+  if (!fromOrigin || !toOrigin) return point;
+  return [
+    point[0] - fromOrigin[0] + toOrigin[0],
+    point[1] - fromOrigin[1] + toOrigin[1],
+  ];
 }
 
 function wallVertices(wall: { wall_line: { coordinates: number[][] } | null }): number[][] {
