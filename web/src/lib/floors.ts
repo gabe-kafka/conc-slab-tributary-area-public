@@ -90,8 +90,17 @@ export function buildFloorInstances(
 
 export function floorSortValue(floorId: string): number {
   const floorText = floorId.trim().toUpperCase();
+  const compactFloorText = floorText.replace(/[^A-Z0-9]/g, "");
 
   if (floorText.includes("BULKHEAD") || floorText.includes("BULK HEAD")) return 950;
+  if (
+    compactFloorText.startsWith("EMR") ||
+    floorText.includes("ELEVATOR MACHINE ROOM") ||
+    floorText.includes("MACHINE ROOM")
+  ) {
+    const match = compactFloorText.match(/\d+/);
+    return 920 + (match ? Number.parseInt(match[0], 10) : 0);
+  }
   if (floorText.includes("ROOF") && floorText.includes("MAIN")) return 1000;
   if (floorText.includes("ROOF")) return 900;
   if (floorText.includes("PENTHOUSE") || floorText === "PH") return 800;
