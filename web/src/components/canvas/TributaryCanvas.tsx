@@ -350,6 +350,7 @@ export default function TributaryCanvas({
             upperInstance: upper,
             lowerCoords: matchedLower,
             upperCoords: matchedUpper,
+            closed: wallIsClosed(lowerWall) && wallIsClosed(bestUpper.wall),
           });
         }
       }
@@ -1348,10 +1349,15 @@ export default function TributaryCanvas({
               );
               return (
                 <Group key={`vconn-${idx}`} listening={false}>
-                  {lowerScreen.slice(0, -1).map((_, i) => {
+                  {Array.from({
+                    length: conn.closed
+                      ? lowerScreen.length
+                      : Math.max(0, lowerScreen.length - 1),
+                  }).map((_, i) => {
+                    const nextIndex = (i + 1) % lowerScreen.length;
                     const l1 = lowerScreen[i];
-                    const l2 = lowerScreen[i + 1];
-                    const u2 = upperScreen[i + 1];
+                    const l2 = lowerScreen[nextIndex];
+                    const u2 = upperScreen[nextIndex];
                     const u1 = upperScreen[i];
                     return (
                       <Line
@@ -1843,6 +1849,7 @@ type VerticalConnection =
       // a quad face of the wall when rendered in iso.
       lowerCoords: [number, number][];
       upperCoords: [number, number][];
+      closed: boolean;
     };
 
 const WALL_MATCH_TOLERANCE_FT = 3;
@@ -1868,4 +1875,9 @@ function wallVertices(wall: { wall_line: { coordinates: number[][] } | null }): 
     return coords.slice(0, -1);
   }
   return coords;
+}
+
+function wallIsClosed(wall: { wall_line: { coordinates: number[][] } | null }): boolean {
+  const coords = wall.wall_line?.coordinates;
+  return Boolean(coords && coords.length >= 4);
 }
