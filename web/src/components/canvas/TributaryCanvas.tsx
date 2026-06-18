@@ -6,7 +6,7 @@ import type Konva from "konva";
 import {
   buildFloorInstances,
   expandFloorIdentifier,
-  floorSortValue,
+  floorStackSortValue,
   type RenderFloorInstance,
 } from "@/lib/floors";
 import type {
@@ -1697,7 +1697,7 @@ function median(values: number[]): number {
 }
 
 function firstFloorSortValue(floor: FloorData): number {
-  return floorSortValue(expandFloorIdentifier(floor.floor_id)[0] ?? floor.floor_id);
+  return floorStackSortValue(floor, expandFloorIdentifier(floor.floor_id)[0] ?? floor.floor_id);
 }
 
 function shouldStartPan(

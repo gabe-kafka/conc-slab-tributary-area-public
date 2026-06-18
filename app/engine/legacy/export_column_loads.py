@@ -19,6 +19,7 @@ from fascade_utils import (
 
 
 RANGE_FLOOR_RE = re.compile(r'^\s*([A-Za-z]*)(\d+)\s*[-–—]\s*([A-Za-z]*)(\d+)\s*$')
+UPPER_LAYOUT_FLOOR_BASE = 900000.0
 
 
 def alphanumeric_sort_key(label):
@@ -42,24 +43,45 @@ def alphanumeric_sort_key(label):
         return [str(label)]
 
 
-def floor_sort_key(floor_id):
+def _is_layout_ordered_upper_floor(floor_id):
+    floor_str = str(floor_id).upper()
+    compact_floor_str = re.sub(r'[^A-Z0-9]', '', floor_str)
+    return (
+        'ROOF' in floor_str
+        or 'BULKHEAD' in floor_str
+        or 'BULK HEAD' in floor_str
+        or compact_floor_str.startswith('EMR')
+        or 'ELEVATOR MACHINE ROOM' in floor_str
+        or 'MACHINE ROOM' in floor_str
+        or 'PENTHOUSE' in floor_str
+        or floor_str == 'PH'
+        or compact_floor_str.startswith('PH')
+    )
+
+
+def floor_sort_key(floor_id, floor_positions=None):
     """
     Sort key function for floor identifiers in descending order.
     Handles: MAIN ROOF, ROOF, PENTHOUSE, numbered floors, GROUND, BASEMENT, etc.
     """
     floor_str = str(floor_id).upper()
     compact_floor_str = re.sub(r'[^A-Z0-9]', '', floor_str)
+
+    if floor_positions and _is_layout_ordered_upper_floor(floor_id):
+        layout_x = floor_positions.get(str(floor_id).strip())
+        if layout_x is not None:
+            return (UPPER_LAYOUT_FLOOR_BASE + float(layout_x), floor_str)
     
     # Define priority order (higher number = appears first)
-    if 'BULKHEAD' in floor_str or 'BULK HEAD' in floor_str:
-        return (950, floor_str)
-    elif (
+    if (
         compact_floor_str.startswith('EMR')
         or 'ELEVATOR MACHINE ROOM' in floor_str
         or 'MACHINE ROOM' in floor_str
     ):
         match = re.search(r'(\d+)', compact_floor_str)
-        return (920 + (int(match.group(1)) if match else 0), floor_str)
+        return (970 + (int(match.group(1)) if match else 0), floor_str)
+    elif 'BULKHEAD' in floor_str or 'BULK HEAD' in floor_str:
+        return (950, floor_str)
     elif 'ROOF' in floor_str and 'MAIN' in floor_str:
         return (1000, floor_str)
     elif 'ROOF' in floor_str:
@@ -127,6 +149,51 @@ def expand_floor_scalar_map(source_values):
         for expanded_floor_id in expand_floor_identifier(floor_id):
             expanded[expanded_floor_id] = value
     return expanded
+
+
+def _floor_plan_layout_x(floor_plan):
+    datum_info = floor_plan.get('alignment_datum') or {}
+    if isinstance(datum_info, dict):
+        datum = datum_info.get('point')
+        if datum is not None:
+            return float(datum[0])
+
+    user_datum = floor_plan.get('user_datum')
+    if user_datum is not None:
+        return float(user_datum[0])
+
+    slab = floor_plan.get('slab_polygon')
+    if slab is not None and not slab.is_empty:
+        min_x, _, max_x, _ = slab.bounds
+        return (float(min_x) + float(max_x)) / 2.0
+
+    return None
+
+
+def build_floor_position_overrides(floor_plans):
+    """Return x-position sort overrides for upper non-numeric floor labels."""
+    positions = {}
+    for floor_plan in floor_plans:
+        floor_id = floor_plan.get('floor_number', floor_plan.get('boundary_id', 'UNKNOWN'))
+        if not _is_layout_ordered_upper_floor(floor_id):
+            continue
+
+        layout_x = _floor_plan_layout_x(floor_plan)
+        if layout_x is None:
+            continue
+
+        for expanded_floor_id in expand_floor_identifier(floor_id):
+            positions[str(expanded_floor_id).strip()] = layout_x
+
+    return positions
+
+
+def sort_floor_ids(floor_ids, floor_positions=None):
+    return sorted(
+        list(floor_ids),
+        key=lambda floor_id: floor_sort_key(floor_id, floor_positions),
+        reverse=True,
+    )
 
 
 def collect_master_matrix_data(floor_plans):
@@ -200,7 +267,8 @@ def collect_master_matrix_data(floor_plans):
     sorted_column_labels = sorted(list(all_column_labels), key=alphanumeric_sort_key)
     
     # Sort floor numbers in descending order (MAIN ROOF → 2ND → 1ST)
-    sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
+    floor_positions = build_floor_position_overrides(floor_plans)
+    sorted_floor_numbers = sort_floor_ids(floor_data.keys(), floor_positions)
     
     # Build matrix data structure: matrix[floor][column] = tributary_area
     matrix = {}
@@ -267,7 +335,8 @@ def collect_fascade_length_data(
     floor_max_distances = expand_floor_scalar_map(floor_max_distances)
     floor_methods = expand_floor_scalar_map(floor_methods)
 
-    sorted_floor_numbers = sorted(list(floor_data.keys()), key=floor_sort_key, reverse=True)
+    floor_positions = build_floor_position_overrides(floor_plans)
+    sorted_floor_numbers = sort_floor_ids(floor_data.keys(), floor_positions)
     sorted_labels = sorted(list(all_labels), key=alphanumeric_sort_key)
     
     matrix = {}
