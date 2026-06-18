@@ -2,6 +2,7 @@ import type { FloorData } from "./types";
 
 const RANGE_FLOOR_RE =
   /^\s*([A-Za-z]*)(\d+)\s*[-\u2013\u2014]\s*([A-Za-z]*)(\d+)\s*$/;
+const UPPER_LAYOUT_FLOOR_BASE = 900_000;
 
 export interface RenderFloorInstance {
   floor: FloorData;
@@ -71,7 +72,8 @@ export function buildFloorInstances(
   return sourceInstances
     .sort((a, b) => {
       const floorDelta =
-        floorSortValue(a.displayFloorId) - floorSortValue(b.displayFloorId);
+        floorStackSortValue(a.floor, a.displayFloorId) -
+        floorStackSortValue(b.floor, b.displayFloorId);
       if (floorDelta !== 0) return floorDelta;
 
       const sourceDelta = a.floor.floor_index - b.floor.floor_index;
@@ -88,19 +90,32 @@ export function buildFloorInstances(
     }));
 }
 
+export function floorStackSortValue(
+  floor: FloorData,
+  floorId: string = floor.floor_id,
+): number {
+  const fallback = floorSortValue(floorId);
+  if (!isLayoutOrderedUpperFloor(floorId)) return fallback;
+
+  const layoutX = floorLayoutX(floor);
+  if (layoutX === null) return fallback;
+
+  return UPPER_LAYOUT_FLOOR_BASE + layoutX;
+}
+
 export function floorSortValue(floorId: string): number {
   const floorText = floorId.trim().toUpperCase();
   const compactFloorText = floorText.replace(/[^A-Z0-9]/g, "");
 
-  if (floorText.includes("BULKHEAD") || floorText.includes("BULK HEAD")) return 950;
   if (
     compactFloorText.startsWith("EMR") ||
     floorText.includes("ELEVATOR MACHINE ROOM") ||
     floorText.includes("MACHINE ROOM")
   ) {
     const match = compactFloorText.match(/\d+/);
-    return 920 + (match ? Number.parseInt(match[0], 10) : 0);
+    return 970 + (match ? Number.parseInt(match[0], 10) : 0);
   }
+  if (floorText.includes("BULKHEAD") || floorText.includes("BULK HEAD")) return 950;
   if (floorText.includes("ROOF") && floorText.includes("MAIN")) return 1000;
   if (floorText.includes("ROOF")) return 900;
   if (floorText.includes("PENTHOUSE") || floorText === "PH") return 800;
@@ -132,4 +147,44 @@ export function floorSortValue(floorId: string): number {
   }
 
   return 0;
+}
+
+function isLayoutOrderedUpperFloor(floorId: string): boolean {
+  const floorText = floorId.trim().toUpperCase();
+  const compactFloorText = floorText.replace(/[^A-Z0-9]/g, "");
+  return (
+    floorText.includes("ROOF") ||
+    floorText.includes("BULKHEAD") ||
+    floorText.includes("BULK HEAD") ||
+    compactFloorText.startsWith("EMR") ||
+    floorText.includes("ELEVATOR MACHINE ROOM") ||
+    floorText.includes("MACHINE ROOM") ||
+    floorText.includes("PENTHOUSE") ||
+    floorText === "PH" ||
+    compactFloorText.startsWith("PH")
+  );
+}
+
+function floorLayoutX(floor: FloorData): number | null {
+  if (floor.alignment_datum) return floor.alignment_datum[0];
+
+  const xs: number[] = [];
+  if (floor.slab_boundary?.type === "Polygon") {
+    collectPolygonXs(floor.slab_boundary.coordinates, xs);
+  } else if (floor.slab_boundary?.type === "MultiPolygon") {
+    for (const polygon of floor.slab_boundary.coordinates) {
+      collectPolygonXs(polygon, xs);
+    }
+  }
+
+  if (xs.length === 0) return null;
+  return (Math.min(...xs) + Math.max(...xs)) / 2;
+}
+
+function collectPolygonXs(rings: number[][][], xs: number[]): void {
+  for (const ring of rings) {
+    for (const coord of ring) {
+      if (Number.isFinite(coord[0])) xs.push(coord[0]);
+    }
+  }
 }

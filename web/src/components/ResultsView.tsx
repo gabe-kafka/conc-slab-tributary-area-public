@@ -5,7 +5,7 @@ import TributaryCanvas from "./canvas/TributaryCanvas";
 import {
   expandedPhysicalFloorCount,
   expandFloorIdentifier,
-  floorSortValue,
+  floorStackSortValue,
 } from "@/lib/floors";
 import type {
   ColumnData,
@@ -75,7 +75,9 @@ export default function ResultsView({
       geometry.floors
         .map((floor) => {
           const representedFloors = expandFloorIdentifier(floor.floor_id);
-          const sortValues = representedFloors.map(floorSortValue);
+          const sortValues = representedFloors.map((floorId) =>
+            floorStackSortValue(floor, floorId),
+          );
           return {
             floor,
             representedFloors,
