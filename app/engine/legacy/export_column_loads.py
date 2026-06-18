@@ -48,9 +48,19 @@ def floor_sort_key(floor_id):
     Handles: MAIN ROOF, ROOF, PENTHOUSE, numbered floors, GROUND, BASEMENT, etc.
     """
     floor_str = str(floor_id).upper()
+    compact_floor_str = re.sub(r'[^A-Z0-9]', '', floor_str)
     
     # Define priority order (higher number = appears first)
-    if 'ROOF' in floor_str and 'MAIN' in floor_str:
+    if 'BULKHEAD' in floor_str or 'BULK HEAD' in floor_str:
+        return (950, floor_str)
+    elif (
+        compact_floor_str.startswith('EMR')
+        or 'ELEVATOR MACHINE ROOM' in floor_str
+        or 'MACHINE ROOM' in floor_str
+    ):
+        match = re.search(r'(\d+)', compact_floor_str)
+        return (920 + (int(match.group(1)) if match else 0), floor_str)
+    elif 'ROOF' in floor_str and 'MAIN' in floor_str:
         return (1000, floor_str)
     elif 'ROOF' in floor_str:
         return (900, floor_str)
